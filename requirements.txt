@@ -1,0 +1,5 @@
+ultralytics>=8.3
+opencv-python>=4.8
+numpy
+lap>=0.5.12   # needed by the ByteTrack tracker in detect.py
+# torch / torchvision: install from https://pytorch.org (CPU or CUDA build)

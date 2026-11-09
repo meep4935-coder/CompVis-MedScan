@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+data/paper/
+runs/
+dist/
+captures/
+*.pt
+!models/*.pt
