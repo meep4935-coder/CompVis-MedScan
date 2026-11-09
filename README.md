@@ -1,45 +1,58 @@
 # CompVis-MedScan
 
-A learning project in computer vision, built in phases.
+A learning project in computer vision, built in phases. The end goal: point a
+camera at a piece of paper (or a label), follow it, and read a specific
+sequence of letters and numbers from it.
 
-## Phase 1: Paper detection & tracking
-
-Goal: find and box **any piece of paper** (any shape, colour, texture) on any
-background, in images, video, or a live webcam, and keep a stable ID per sheet.
-
-Later phases will refine this toward more precise medical-scan work.
+| Phase | What it does | Main script |
+|---|---|---|
+| 1 | Find and box any piece of paper, keep an ID per sheet | `detect.py` |
+| 2 | Outline the paper, track it, **capture a flattened scan** of its contents | `scan.py` |
+| 3 | *(next)* Read the text on the scans, find the target sequence | — |
 
 ## How it works
 
 ```
-generate_synthetic.py  ->  data/paper/ (images + YOLO labels)
-train.py               ->  runs/paper/weights/best.pt  (fine-tuned YOLO11n)
-detect.py              ->  boxes + track IDs on webcam / video / images
+generate_synthetic.py  ->  data/paper/ (images + outline labels)
+train.py               ->  runs/paper_seg/weights/best.pt  (fine-tuned YOLO11n-seg)
+scan.py                ->  outlines + track IDs + flattened scans in captures/scans/
 ```
 
 1. **Synthetic data.** A COCO-pretrained YOLO has no "paper" class, so we need
    labelled examples. Instead of hand-labelling, we *render* them: random
    sheets (rectangles, A4/letter/sticky-note ratios, circles, torn edges,
-   polygons; plain / lined / grid / text / printed / kraft textures) are
-   perspective-warped onto random backgrounds with shadows, lighting
-   gradients, blur, noise, and distractor objects that occlude them. Since we
-   drew every sheet, the bounding box is exact and free.
-2. **Transfer learning.** `train.py` fine-tunes `yolo11n.pt` (2.6M params). The
-   pretrained backbone already detects edges/corners/texture; training just
-   teaches the head what "paper" looks like. Coming from MLPs: the backbone is
-   a stack of conv layers (shared-weight MLPs sliding over the image), and the
-   head predicts, per grid cell, box offsets + an objectness/class score.
-3. **Tracking.** `detect.py` uses ByteTrack: each frame's boxes are matched to
-   the previous frame's by overlap (IoU) and a Kalman motion model, so each
-   sheet keeps its ID.
+   polygons; plain / lined / grid / text / printed / kraft textures, glossy
+   glare) are perspective-warped onto random backgrounds with shadows,
+   lighting gradients, blur, noise, and objects that occlude them. Since we
+   drew every sheet, its exact outline is known for free.
+   - **Labels** (class 1): product/pharmacy labels wrapped around bottles (with
+     cylinder curvature + shine) or stuck on 3D boxes, often clear plastic.
+   - **Hard negatives** (never labelled): curtains with folds, walls/doors,
+     bare bottles and boxes, pens, blobs. These teach the model what paper is *not*.
+2. **Transfer learning.** `train.py` fine-tunes `yolo11n-seg.pt`. The pretrained
+   backbone already detects edges/corners/texture; training teaches the heads
+   our two classes. Coming from MLPs: the backbone is a stack of conv layers
+   (shared-weight MLPs sliding over the image); the detection head predicts,
+   per grid cell, box offsets + class scores, and the segmentation head
+   predicts mask coefficients that combine a few shared "prototype" masks into
+   one mask per object.
+3. **Tracking.** ByteTrack matches each frame's objects to the previous
+   frame's by overlap (IoU) and a Kalman motion model, so each sheet keeps its ID.
+4. **Corners + flattening** (`scan.py`). The outline is simplified to 4 corners
+   (or the tightest rotated rectangle for round/torn paper), smoothed over
+   frames, then a **perspective transform** (a 3x3 homography) maps them to a
+   straight rectangle: the view a flatbed scanner would give.
+5. **Best-frame capture.** For each tracked sheet, every frame's flattened view
+   gets a score = sharpness (variance of the Laplacian) × size × glare
+   penalty. Only sheets fully inside the frame and tracked for ≥ 5 frames are
+   considered. The best view so far is saved, plus an enhanced greyscale copy.
 
 ### About the yolov5 repo
 
 The original [ultralytics/yolov5](https://github.com/ultralytics/yolov5) repo is
-script-based (`train.py` / `detect.py` inside the clone). Ultralytics now ships
-the same ideas as a pip package (`ultralytics`), with newer models (YOLO11) and
-the old architecture still available as `yolov5nu.pt`. To compare:
-`python train.py --model yolov5nu.pt --name paper_v5`.
+script-based. Ultralytics now ships the same ideas as a pip package
+(`ultralytics`), with newer models (YOLO11) and the old architecture still
+available (`yolov5nu.pt`, boxes only).
 
 ## Setup
 
@@ -52,54 +65,68 @@ pip install -r requirements.txt
 ## Usage
 
 ```bash
-python generate_synthetic.py --train 2000 --val 300 --preview   # ~3 min
-python train.py --epochs 30                                      # ~80 min on CPU
-python detect.py --source 0                                      # webcam, press q to quit
-python detect.py --source my_video.mp4 --save                    # -> runs/detect_out/
-python detect.py --source photo.jpg
+python generate_synthetic.py --train 3000 --val 400 --preview   # ~5 min
+python train.py --epochs 30                                      # ~2-3 h on CPU
+python scan.py                                   # webcam: paper only
+python scan.py --labels                          # also labels on bottles / boxes
+python scan.py --source clip.mp4 --save-video    # video -> captures/scans/<time>/
+python scan.py --source photo.jpg                # single image (or a folder)
 ```
 
-Training outputs useful plots in `runs/paper/` (`results.png` loss/mAP curves,
-`val_batch*_pred.jpg` predictions, `confusion_matrix.png`).
+Keys in the live window: **q** quit, **c** force-capture everything visible,
+**s** save the raw frame (for retraining).
+
+Output in `captures/scans/<date_time>/`:
+- `paper_id3.jpg`: best flattened colour view of sheet #3
+- `paper_id3_enhanced.jpg`: contrast-boosted greyscale (easier to read / OCR)
+- `paper_id3_manual1.jpg`: anything captured with **c**
+
+Training outputs useful plots in `runs/paper_seg/` (`results.png` loss/mAP
+curves, `val_batch*_pred.jpg` predictions, `confusion_matrix.png`).
+
+Known limits: a sheet held sideways is saved sideways (text orientation will be
+handled with the reading step); curved labels are flattened as if they were flat.
 
 ## Testing on the MacBook (webcam) while developing on the desktop
 
-The desktop does data generation and training; the Mac only runs `detect.py`.
-
-The trained model is committed at `models/paper_best.pt`, so the easiest route
-is git. On the Mac:
+The desktop does data generation and training; the Mac only runs the camera.
+Trained models are committed in `models/`. On the Mac:
 ```bash
 git clone https://github.com/meep4935-coder/CompVis-MedScan.git
 cd CompVis-MedScan
 bash mac/setup_mac.sh        # once (creates .venv, installs packages)
-bash mac/run_webcam.sh       # q = quit, s = save a raw frame to captures/
+bash mac/run_scan.sh         # phase 2 (add --labels for labels)
+bash mac/run_webcam.sh       # phase 1 box detector
 ```
+Already cloned? `git pull` then `bash mac/run_scan.sh`.
+
 macOS asks for camera permission for Terminal on first run (System Settings >
 Privacy & Security > Camera). After a retrain on the desktop, run
 `python make_bundle.py` (copies the new weights into `models/`), commit, push,
-and `git pull` on the Mac.
+and `git pull` on the Mac. No git? The same command writes
+`dist/CompV_bundle.zip` to copy over by USB/cloud.
 
-No git on the Mac? `python make_bundle.py` also writes `dist/CompV_bundle.zip`
-(code + model) that you can copy over by USB/cloud and unzip.
-
-**Feedback loop:** frames saved with `s` on the Mac land in `captures/`. Copy
-the ones *without* paper back into `data/backgrounds/` on the desktop, and keep
-the ones *with* paper for labelling. Then regenerate, retrain, re-bundle.
+**Feedback loop:** frames saved with **s** land in `captures/`. Copy the ones
+showing things wrongly detected as paper (curtain, wall...) and containing *no*
+paper or labels back into `data/backgrounds/` on the desktop. Then regenerate,
+retrain, re-bundle.
 
 ## Making it work better on *your* camera
 
 Synthetic-only training has a "sim-to-real gap". In order of impact:
 
-1. **Real backgrounds**: drop 50–200 photos of your desk/floor/room (*without*
-   paper) into `data/backgrounds/`, regenerate, retrain. Used for 70% of samples.
-2. **Real labelled photos**: take ~50–100 photos with paper, label them (e.g.
-   [Label Studio](https://labelstud.io) or Roboflow, export YOLO format) and
-   add them to `data/paper/images|labels/train`.
-3. Tune `--conf` in `detect.py` (raise to cut false positives, lower to catch more).
+1. **Real backgrounds**: 50–200 photos of your room/desk/curtain (*without*
+   paper or labels) in `data/backgrounds/`, regenerate, retrain. Used for 70%
+   of samples.
+2. **Real labelled photos**: ~50–100 photos with paper, outlined with a polygon
+   tool (e.g. [Label Studio](https://labelstud.io) or Roboflow, export YOLO
+   segmentation format), added to `data/paper/images|labels/train`.
+3. Tune `--conf` (raise to cut false positives, lower to catch more).
 
 ## Key metrics
 
-- **Precision**: of the boxes predicted, how many were paper.
+- **Precision**: of the objects predicted, how many were right.
 - **Recall**: of the real sheets, how many were found.
-- **mAP50**: average precision when a box counts as correct at IoU ≥ 0.5.
-- **mAP50-95**: same, averaged over stricter IoU thresholds (box tightness).
+- **mAP50**: average precision when a prediction counts as correct at IoU ≥ 0.5.
+- **mAP50-95**: same, averaged over stricter IoU thresholds (outline tightness).
+- Reported twice for a seg model: **Box** (boxes) and **Mask** (outlines).

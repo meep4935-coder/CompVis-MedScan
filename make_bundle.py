@@ -1,12 +1,13 @@
 """
 Package the project for testing on another machine (e.g. the MacBook).
 
-1. Copies the newest trained weights into models/paper_best.pt ("release" them).
+1. Copies the newest trained weights into models/ ("release" them):
+       runs/paper_seg/weights/best.pt -> models/paper_seg.pt   (scan.py, phase 2)
 2. Zips code + models/ into dist/CompV_bundle.zip (no dataset, no venv, no runs).
 
 Usage:
-    python make_bundle.py                                  # uses runs/paper/weights/best.pt
-    python make_bundle.py --weights runs/paper_v5/weights/best.pt
+    python make_bundle.py
+    python make_bundle.py --weights runs/other/weights/best.pt --as paper_seg.pt
 """
 
 import argparse
@@ -15,14 +16,15 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).parent
-INCLUDE = ["generate_synthetic.py", "train.py", "detect.py", "make_bundle.py",
+INCLUDE = ["generate_synthetic.py", "train.py", "detect.py", "scan.py", "make_bundle.py",
            "requirements.txt", "README.md", ".gitignore", ".gitattributes",
-           "mac/setup_mac.sh", "mac/run_webcam.sh"]
+           "mac/setup_mac.sh", "mac/run_webcam.sh", "mac/run_scan.sh"]
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--weights", type=Path, default=ROOT / "runs" / "paper" / "weights" / "best.pt")
+    ap.add_argument("--weights", type=Path, default=ROOT / "runs" / "paper_seg" / "weights" / "best.pt")
+    ap.add_argument("--as", dest="as_name", default="paper_seg.pt", help="file name inside models/")
     ap.add_argument("--out", type=Path, default=ROOT / "dist" / "CompV_bundle.zip")
     args = ap.parse_args()
 
@@ -30,11 +32,11 @@ def main():
         raise SystemExit(f"Weights not found: {args.weights} (train first)")
     models = ROOT / "models"
     models.mkdir(exist_ok=True)
-    shutil.copy2(args.weights, models / "paper_best.pt")
+    shutil.copy2(args.weights, models / args.as_name)
 
     args.out.parent.mkdir(exist_ok=True)
     with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as z:
-        for rel in INCLUDE + ["models/paper_best.pt"]:
+        for rel in INCLUDE + [f"models/{p.name}" for p in sorted(models.glob("*.pt"))]:
             p = ROOT / rel
             if not p.exists():
                 print(f"  skip missing {rel}")
