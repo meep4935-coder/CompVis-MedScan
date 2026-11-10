@@ -21,8 +21,9 @@ from datetime import date
 
 RAMQ_RE = re.compile(r"(?<![A-Z0-9])([A-Z]{4})[\s\-]?(\d{4})[\s\-]?(\d{4})(?![A-Z0-9])", re.I)
 # OCR often confuses these; a RAMQ number has letters ONLY in positions 1-4, digits ONLY in 5-12
-TO_LETTER = {"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B", "4": "A", "7": "T"}
-TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "|": "1", "Z": "2", "S": "5", "G": "6", "B": "8", "T": "7"}
+TO_LETTER = {"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B", "4": "A", "7": "T", "|": "I", "/": "I"}
+TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "|": "1", "/": "1", "Z": "2", "S": "5", "G": "6",
+            "B": "8", "T": "7", "²": "2"}
 
 
 def letters_only(s):
@@ -63,6 +64,27 @@ def fix_confusions(candidate):
 def find_ramq(text):
     """All RAMQ-looking numbers in a block of text, normalised to 12 chars."""
     return ["".join(m.groups()).upper() for m in RAMQ_RE.finditer(text)]
+
+
+# wrapped in a lookahead so matches may overlap: in "RAMQ LEMG 5453 1886" the word RAMQ
+# must not swallow the real number
+# No "must start after a gap" rule: OCR often glues the label on ("NAMCLOC 4157 0830").
+LOOSE_RE = re.compile(r"(?=([A-Z0-9|/²]{4})[\s\-]?([A-Z0-9|/²]{4})[\s\-]?([A-Z0-9|/²]{4})(?![A-Z0-9]))", re.I)
+
+
+def find_ramq_loose(text):
+    """Like find_ramq, but tolerant of OCR mix-ups ('7REM 8S55 1S12'). Keeps only reads that
+    become a valid RAMQ after the letters-then-digits fix. The first 4 characters must
+    contain at least 2 real letters, so plain long numbers (phone, record no.) don't qualify."""
+    out = []
+    for m in LOOSE_RE.finditer(text):
+        head = m.group(1)
+        if sum(c.isalpha() for c in head) < 2:
+            continue
+        r = fix_confusions("".join(m.groups()))
+        if r and is_valid(r) and r not in out:
+            out.append(r)
+    return out
 
 
 def decode(r):

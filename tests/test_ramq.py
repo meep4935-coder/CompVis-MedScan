@@ -24,6 +24,15 @@ class TestRamq(unittest.TestCase):
         self.assertEqual(ramq.fix_confusions("TRE0 8555 1512"), "TREO85551512")
         self.assertIsNone(ramq.fix_confusions("TREM 8555 151"))
 
+    def test_find_loose(self):
+        self.assertEqual(ramq.find_ramq_loose("NAM: 7REM 8S55 1S12 Sexe: F"), ["TREM85551512"])
+        self.assertEqual(ramq.find_ramq_loose("Tel 514 555 0123 4567"), [])  # digits only: ignored
+        self.assertEqual(ramq.find_ramq_loose("TREM 8563 1512"), [])  # month 13: invalid
+        self.assertEqual(ramq.find_ramq_loose("RAMQ LEMG 5453 1886"), ["LEMG54531886"])  # label word
+        self.assertIn("TURL20581427", ramq.find_ramq_loose("No ass. maladieTURL 2058 1427"))  # glued label
+        self.assertIn("MERI35611531", ramq.find_ramq_loose("NoRAMQ: MER/ 3561 1531"))
+        self.assertIn("MACM85552353", ramq.find_ramq_loose("NAM MACM 8555 ²353"))
+
     def test_valid_and_check(self):
         r = "TREM85551512"
         self.assertTrue(ramq.is_valid(r))

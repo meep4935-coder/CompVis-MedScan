@@ -31,6 +31,19 @@ first initial) + 8 digits (YY, MM with +50 for women, DD, 2 admin digits), so
 it cross-checks the name, sex and DOB read from the same document. It also
 fixes typical OCR mix-ups using "letters first, digits after" (`7REM 8S55` -> `TREM 855…`).
 
+### Choosing an OCR engine: `eval_ocr.py`
+
+```bash
+python eval_ocr.py --docs data/docs_eval            # clean pages
+python eval_ocr.py --docs data/docs_eval --camera   # pages degraded like a webcam scan
+```
+
+Compares **RapidOCR** (PaddleOCR's PP-OCRv5 Latin models on ONNX Runtime; PaddlePaddle
+itself has no Python 3.14 build, and ONNX is also how it would run on phones) with
+**EasyOCR**. Scores against the JSON truth, printed vs handwritten: word recall,
+exact read of each name / RAMQ / DOB, whether the true RAMQ is found on the page
+(`find_ramq_loose` repairs letter/digit mix-ups), and seconds per page.
+
 ## How it works
 
 ```

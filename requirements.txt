@@ -3,3 +3,7 @@ opencv-python>=4.8
 numpy
 lap>=0.5.12   # needed by the ByteTrack tracker in detect.py
 # torch / torchvision: install from https://pytorch.org (CPU or CUDA build)
+# Phase 3 reading (OCR)
+rapidocr>=3.0      # PaddleOCR PP-OCRv5 models, run with ONNX Runtime
+onnxruntime
+easyocr            # only for the comparison in eval_ocr.py
