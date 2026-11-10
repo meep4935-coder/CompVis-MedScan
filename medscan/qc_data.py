@@ -95,7 +95,8 @@ def random_patient(rng=random):
     if rng.random() < 0.12:  # compound family name
         last = f"{last}-{rng.choice(LAST_NAMES)}"
     first = rng.choice(FIRST_F if sex == "F" else FIRST_M)
-    middle = rng.choice(MIDDLE_F if sex == "F" else MIDDLE_M) if rng.random() < 0.6 else ""
+    options = [m for m in (MIDDLE_F if sex == "F" else MIDDLE_M) if m not in first.split("-")]
+    middle = rng.choice(options) if rng.random() < 0.6 else ""  # never 'Marc-André André'
     dob = date(1925, 1, 1) + timedelta(days=rng.randint(0, 365 * 100))
     ramq = make_ramq(last, first, dob, sex, rng.randint(1, 99))
     dossier = str(rng.randint(100000, 9999999))

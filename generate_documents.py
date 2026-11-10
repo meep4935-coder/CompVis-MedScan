@@ -221,25 +221,34 @@ def make_sticker(p, hosp, scale=1.0):
 def make_consult(p, hosp):
     W, H = 1240, 1754
     doc = Doc(W, H, (252, 252, 250))
-    fb, f = font("bold", 34), font("print", 26)
-    doc.text((60, 60), hosp[0], fb)
-    doc.text((60, 110), f"{hosp[2]} (Québec)", f)
-    doc.text((60, 200), random.choice(["NOTE DE CONSULTATION", "FEUILLE D'ORDONNANCES", "NOTE D'ÉVOLUTION",
-                                       "DEMANDE DE CONSULTATION"]), font("bold", 40))
+    f = font("print", 26)
     st = make_sticker(p, hosp, scale=random.uniform(0.85, 1.0))
     doc.paste(st, (W - st.img.width - 50, 40))
+    room = W - st.img.width - 50 - 60 - 30  # header must stop before the sticker
+    size = 34
+    fb = font("bold", size)
+    while fb.getlength(hosp[0]) > room and size > 16:
+        size -= 2
+        fb = font("bold", size, fb.path)
+    doc.text((60, 60), hosp[0], fb)
+    doc.text((60, 110), f"{hosp[2]} (Québec)", f)
+    title = random.choice(["NOTE DE CONSULTATION", "FEUILLE D'ORDONNANCES", "NOTE D'ÉVOLUTION", "DEMANDE DE CONSULTATION"])
+    ft = font("bold", 40)
+    while ft.getlength(title) > room and ft.size > 20:
+        ft = font("bold", ft.size - 2, ft.path)
+    doc.text((60, 200), title, ft)
     visit = date(2026, 1, 1) + timedelta(days=random.randint(0, 330))
     doc.text((60, 300), f"Date : {visit.isoformat()}    Heure : {random.randint(7, 19)}:{random.choice(['00', '15', '30', '45'])}", f)
     y = 380
     for i in range(random.randint(14, 24)):  # ruled lines with mixed printed / handwritten notes
-        doc.d.line([60, y + 40, W - 60, y + 40], fill=(200, 200, 215), width=1)
+        doc.d.line([60, y + 44, W - 60, y + 44], fill=(200, 200, 215), width=1)
         r = random.random()
         if r < 0.45:
-            doc.text((70, y), random.choice(HAND_FILLER + FILLER), font("hand", random.randint(28, 36)),
+            doc.text((70, y), random.choice(HAND_FILLER + FILLER), font("hand", random.randint(26, 32)),
                      fill=random.choice(INKS), hand=True)
         elif r < 0.65:
-            doc.text((70, y + 6), random.choice(FILLER), f)
-        y += 54
+            doc.text((70, y + 8), random.choice(FILLER), f)
+        y += 66
         if y > H - 250:
             break
     doc_name, lic = qc.physician()
@@ -269,7 +278,8 @@ def make_prescription(p, _hosp):
     doc.label_value(60, y, random.choice(["DDN :", "Date de naissance :"]), qc.format_date(p.dob), f, fv, "dob",
                     hand=hand, fill=ink if hand else (20, 20, 20))
     visit = date(2026, 1, 1) + timedelta(days=random.randint(0, 330))
-    doc.text((780, 260), f"Date : {visit.isoformat()}", f)
+    dt = f"Date : {visit.isoformat()}"
+    doc.text((W - 60 - f.getlength(dt), 185), dt, f)  # beside the title, clear of long names
     y += 110
     doc.text((60, y), "Rx", font("bold", 60))
     y += 90
