@@ -8,7 +8,28 @@ sequence of letters and numbers from it.
 |---|---|---|
 | 1 | Find and box any piece of paper, keep an ID per sheet | `detect.py` |
 | 2 | Outline the paper, track it, **capture a flattened scan** of its contents | `scan.py` |
-| 3 | *(next)* Read the text on the scans, find the target sequence | — |
+| 3 | *(in progress)* Read the patient's **name, RAMQ (NAM) and date of birth** from anything in view | `medscan/` |
+
+### Phase 3 so far: fake Quebec patient documents + RAMQ checker
+
+All patients are **fictional**. Hospital names are real Quebec institutions used
+as header text only; clinics and pharmacies are invented.
+
+```bash
+python generate_documents.py --n 300 --preview   # -> data/docs/ (image + JSON truth per doc)
+python -m unittest tests.test_ramq                # RAMQ format / cross-check tests
+```
+
+Document types: hospital card, patient ID sticker, consultation note (with
+sticker + handwriting), clinic prescription (patient info sometimes
+handwritten), pharmacy bottle label (name only, no NAM), handwritten sticky note.
+Each JSON stores the true patient and the box around every name / RAMQ / DOB on
+the page, plus distractors (record no., phone, visit and expiry dates).
+
+`medscan/ramq.py`: a RAMQ number is 4 letters (first 3 of the family name +
+first initial) + 8 digits (YY, MM with +50 for women, DD, 2 admin digits), so
+it cross-checks the name, sex and DOB read from the same document. It also
+fixes typical OCR mix-ups using "letters first, digits after" (`7REM 8S55` -> `TREM 855…`).
 
 ## How it works
 

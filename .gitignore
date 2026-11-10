@@ -6,3 +6,4 @@ dist/
 captures/
 *.pt
 !models/*.pt
+data/docs*/
