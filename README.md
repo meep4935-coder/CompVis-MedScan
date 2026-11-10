@@ -8,7 +8,7 @@ sequence of letters and numbers from it.
 |---|---|---|
 | 1 | Find and box any piece of paper, keep an ID per sheet | `detect.py` |
 | 2 | Outline the paper, track it, **capture a flattened scan** of its contents | `scan.py` |
-| 3 | *(in progress)* Read the patient's **name, RAMQ (NAM) and date of birth** from anything in view | `medscan/` |
+| 3 | *(in progress)* Read the patient's **name, RAMQ (NAM) and date of birth** from anything in view | `medscan/`, `eval_*.py` |
 
 ### Phase 3 so far: fake Quebec patient documents + RAMQ checker
 
@@ -43,6 +43,37 @@ itself has no Python 3.14 build, and ONNX is also how it would run on phones) wi
 **EasyOCR**. Scores against the JSON truth, printed vs handwritten: word recall,
 exact read of each name / RAMQ / DOB, whether the true RAMQ is found on the page
 (`find_ramq_loose` repairs letter/digit mix-ups), and seconds per page.
+
+### Reading the three fields: `medscan/extract.py` + `medscan/vote.py`
+
+No typing or correcting by the physician: uncertainty is settled by rules, cross-checks
+and repeated views, then a **one-tap accept / reject**.
+
+- **Rules per field.**
+  - **Name:** no digits (a digit inside a name is a misread letter), capitalised words,
+    not a header, drug or physician ("Dr", "permis").
+  - **DOB:** a real past date in a Quebec format (AAAA-MM-JJ, JJ/MM/AAAA, "28 avril 1939",
+    "20-DÉC-1953"), near a DDN / Né(e) / Naissance label. Dates labelled "Date :" or "Exp"
+    lose points.
+  - **RAMQ:** 4 letters + 8 digits with a valid date.
+- **Cross-checks.** The RAMQ letters must equal the family name + first initial, and its
+  digits the DOB. The combination where everything agrees wins. This also decides which word
+  is the family name in "LEMIEUX GENEVIÈVE", and repairs a RAMQ letter misread as a look-alike
+  ("GIR1" + GIRARD Jean → GIRJ). The extractor does not use the generator's name lists, so
+  it is not tuned to our own fake names.
+- **Voting** (`Voter`). Every *new view* of a document (the page moved or the sharpness
+  changed) votes on each field. A record is proposed only when each field has ≥ 3 views and
+  a clear majority, and the winners agree.
+  - **On reject**, that record is never offered again. Votes restart, so the next proposal
+    comes from new views, not the runner-up. After 2 rejects it asks for a better view
+    instead of guessing.
+  - A page without all three fields (e.g. a pill-bottle label) is never proposed on its own.
+
+```bash
+python eval_extract.py [--camera]   # per-field right / wrong / missing on single pages
+python eval_live.py                 # simulated live sessions: 8 webcam-like views per page
+python -m unittest discover tests
+```
 
 ## How it works
 
