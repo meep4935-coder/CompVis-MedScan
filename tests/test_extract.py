@@ -43,6 +43,25 @@ class TestExtract(unittest.TestCase):
         r = extract(page("Hôpital Fleury", "NOTE D'ÉVOLUTION", "Dre Sarah Boucher, permis 1-67688"))
         self.assertIsNone(r.last.value)
 
+    def test_titles_and_period_for_comma(self):
+        r = extract(page("M. Gaétan Pierre Bédard-Fournier", "BEDG67102931", "né le 1967-10-29"))
+        self.assertEqual((r.last.value, r.first.value), ("Bédard-Fournier", "Gaétan"))
+        r = extract(page("DUBÉ. Marie-Ève Anne", "NAM: DUBM84541713", "Né(e): 1984/04/17"))
+        self.assertEqual((r.last.value, r.first.value), ("Dubé", "Marie-Ève"))
+
+    def test_card_labels_in_pieces(self):
+        items = [([33, 183, 113, 219], "NOM", 0.99), ([94, 186, 288, 224], "LEMIEUX", 0.99),
+                 ([155, 240, 533, 290], "GENEVIÈVE LUCIE", 0.99), ([35, 242, 173, 280], "PRÉNOM", 0.99),
+                 ([33, 312, 471, 363], "RAMQ LEMG 5453 1886", 0.97)]
+        r = extract(items)
+        self.assertEqual((r.last.value, r.first.value, r.middle.value), ("Lemieux", "Geneviève", "Lucie"))
+
+    def test_header_next_to_sticker_not_merged(self):
+        items = [([51, 58, 600, 109], "CHU de Québec - Hôpital de l'Enfant-Jésus", 0.99),
+                 ([620, 60, 856, 90], "Émilie Élise Cloutier", 0.98),
+                 ([620, 95, 1054, 125], "NAM: CLOE 6857 1257 Sexe: F", 0.97)]
+        self.assertEqual(extract(items).last.value, "Cloutier")
+
     def test_dates(self):
         self.assertIn(date(1939, 4, 28), [d for d, _ in parse_dates("Né(e): 28 avril 1939")])
         self.assertIn(date(1953, 12, 20), [d for d, _ in parse_dates("DDN 20-DÉC-1953")])

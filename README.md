@@ -69,11 +69,45 @@ and repeated views, then a **one-tap accept / reject**.
     instead of guessing.
   - A page without all three fields (e.g. a pill-bottle label) is never proposed on its own.
 
+- **Reading under rules** (`medscan/ocr.py`, `medscan/ctc.py`). The reader outputs, for each
+  thin slice of a text line, a probability for every character. Instead of keeping only the
+  top guess, a Viterbi search finds the most likely reading that *fits the field's pattern*
+  (RAMQ: 4 letters + 8 digits; dates: AAAA-MM-JJ or JJ/MM/AAAA). A "3" in a letter position
+  becomes the model's second guess "J", and a dropped digit is recovered. The name
+  cross-check asks the same model how plausible the name's letters are, instead of using a
+  hand-written look-alike table.
+
 ```bash
-python eval_extract.py [--camera]   # per-field right / wrong / missing on single pages
-python eval_live.py                 # simulated live sessions: 8 webcam-like views per page
+python eval_extract.py --engine rapidp --camera   # per-field right / wrong / missing
+python eval_live.py                               # simulated live sessions (8 views per page)
 python -m unittest discover tests
 ```
+
+Results on 92 fake pages degraded like a webcam (single page → live with voting):
+
+| | single page | live, ≤ 8 views |
+|---|---|---|
+| right patient record | 87% fully right | **94.6% accepted** (median 3 views) |
+| wrong RAMQ / DOB | 0 / 0 | — |
+| wrong proposals | — | 2 (handwritten names misread the same way every time) |
+| proposed from a page missing a field | — | 0 |
+
+### Live: `scan.py --read`
+
+```bash
+python scan.py --read                                   # webcam
+python make_test_video.py --doc data/docs_eval/doc_00010.jpg --out captures/clip.mp4 [--hd]
+python scan.py --source captures/clip.mp4 --read --auto-accept --no-show   # no webcam needed
+bash mac/run_read.sh                                     # on the Mac
+```
+
+Reading runs in a background thread on each tracked sheet's new views (and on the whole
+frame when no sheet is detected). Each sheet shows `reading (n views)` or *text too small:
+bring closer*; a confident record appears in a bar: **Enter** accept, **Backspace / r**
+reject. Accepted records are saved as `patient_N.json` in the session folder (git-ignored).
+The webcam is asked for 1920x1080: on a full page held at arm's length, 720p leaves the
+small text ~10 px tall and the reads never settle, while 1080p (~20 px) was accepted in
+about 2 seconds in the synthetic test.
 
 ## How it works
 
@@ -161,6 +195,7 @@ git clone https://github.com/meep4935-coder/CompVis-MedScan.git
 cd CompVis-MedScan
 bash mac/setup_mac.sh        # once (creates .venv, installs packages)
 bash mac/run_scan.sh         # phase 2 (add --labels for labels)
+bash mac/run_read.sh         # phase 3: read name / RAMQ / DOB, Enter = accept, Backspace = reject
 bash mac/run_webcam.sh       # phase 1 box detector
 ```
 Already cloned? `git pull` then `bash mac/run_scan.sh`.

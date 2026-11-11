@@ -15,12 +15,18 @@ Saved to captures/scans/<session>/:
     paper_id3.jpg            flattened colour view (best so far)
     paper_id3_enhanced.jpg   contrast-boosted greyscale, easier to read / OCR later
 
+With --read (Phase 3), each sheet is also READ in the background: name, RAMQ and DOB are
+voted on across views; when confident, a bar shows the patient record to accept or reject.
+Accepted records are saved as patient_N.json next to the captures.
+
 Usage:
     python scan.py                          # webcam 0
+    python scan.py --read                   # + read name / RAMQ / DOB, one-tap confirm
     python scan.py --labels                 # also track labels on bottles / boxes
     python scan.py --source clip.mp4 --save-video
     python scan.py --source photo.jpg       # or a folder of images
 Keys (live window): q quit | c force-capture everything visible | s save raw frame
+                    Enter accept the proposed patient | Backspace or r reject it
 """
 
 import argparse
@@ -147,6 +153,10 @@ class Scanner:
         self.root = self.out = ROOT / "captures" / "scans" / time.strftime("%Y%m%d_%H%M%S")
         self.last_capture = None  # thumbnail shown in the corner
         self.n_forced = 0
+        self.live = None
+        if getattr(args, "read", False):
+            from medscan.live import LiveReader
+            self.live = LiveReader(self.root, min_views=args.min_views)
 
     def save(self, name, flat):
         self.out.mkdir(parents=True, exist_ok=True)
@@ -161,6 +171,8 @@ class Scanner:
              else self.model.predict(frame, **kw))[0]
         vis = frame.copy()
         if r.masks is None:
+            if self.live:  # nothing detected: read the whole frame now and then
+                self.live.offer_frame(frame)
             return vis, []
         diag = float(np.hypot(*frame.shape[:2]))
         frame_area = frame.shape[0] * frame.shape[1]
@@ -187,6 +199,8 @@ class Scanner:
             if ok or force:
                 flat = rectify(frame, raw_quad, None if is_quad else poly)
                 if flat is not None:
+                    if self.live and ok:
+                        self.live.offer(name, flat, raw_quad, frame.shape)
                     score, sharp, glare = quality(flat, area)
                     now = time.time()
                     if force:
@@ -205,6 +219,8 @@ class Scanner:
             for p in quad.astype(np.int32):
                 cv2.circle(vis, tuple(p), 6, (0, 0, 255), -1)
             txt = f"{CLASS_NAMES[cls]} #{tid} {conf:.2f}" + ("  [captured]" if t.saved else "")
+            if self.live:
+                txt += f"  {self.live.status(name)}"
             x, y = quad[0].astype(int)
             (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             cv2.rectangle(vis, (x, y - th - 10), (x + tw + 6, y), col, -1)
@@ -245,6 +261,10 @@ def run_stream(sc, args):
         vis, _ = sc.process(frame, track=True, force=force)
         force = False
         vis = sc.overlay_thumb(vis)
+        if sc.live:
+            if args.auto_accept and sc.live.current():  # testing without a keyboard
+                sc.live.accept()
+            vis = sc.live.draw_bar(vis)
         now = time.time()
         fps = 0.9 * fps + 0.1 / max(now - t_prev, 1e-6)
         t_prev = now
@@ -263,6 +283,10 @@ def run_stream(sc, args):
                 break
             if key == ord("c"):
                 force = True
+            if sc.live and key in (13, 10):  # Enter
+                sc.live.accept()
+            if sc.live and key in (8, 127, ord("r")):  # Backspace (Windows / Mac) or r
+                sc.live.reject()
             if key == ord("s"):
                 d = ROOT / "captures"
                 d.mkdir(exist_ok=True)
@@ -302,10 +326,13 @@ def main():
     ap.add_argument("--imgsz", type=int, default=416, help="inference size; use the training size")
     ap.add_argument("--min-frames", type=int, default=5, help="frames a sheet must be tracked before capture")
     ap.add_argument("--min-area", type=float, default=0.02, help="min sheet area as a fraction of the frame")
-    ap.add_argument("--cam-width", type=int, default=1280)
-    ap.add_argument("--cam-height", type=int, default=720)
+    ap.add_argument("--cam-width", type=int, default=1920, help="asked of the webcam; it falls back if unsupported")
+    ap.add_argument("--cam-height", type=int, default=1080)
     ap.add_argument("--save-video", action="store_true", help="also save the annotated video/image")
     ap.add_argument("--no-show", dest="show", action="store_false")
+    ap.add_argument("--read", action="store_true", help="read name / RAMQ / DOB and propose the patient record")
+    ap.add_argument("--min-views", type=int, default=3, help="distinct views needed per field before proposing")
+    ap.add_argument("--auto-accept", action="store_true", help="testing: accept every proposal automatically")
     args = ap.parse_args()
 
     sc = Scanner(args)

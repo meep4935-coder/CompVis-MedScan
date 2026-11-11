@@ -24,9 +24,83 @@ from dataclasses import dataclass, field
 from datetime import date
 from itertools import product
 
+from medscan import ctc
 from medscan.ramq import decode, find_ramq_loose, is_valid, name_code
 
 TODAY = date.today()
+
+
+# ---------------------------------------------------------------- re-reading under rules
+
+_C = r"[A-Za-z0-9|/²]"
+RAMQ_SPAN = re.compile(rf"(?=({_C}{{3,5}}[\s\-]?{_C}{{3,5}}[\s\-]?{_C}{{2,5}}))")
+_D = r"[0-9OoQDIlLZSBG|]"
+DATE_SPAN = re.compile(rf"(?=({_D}{{1,4}}\s?[-/.]\s?{_D}{{1,3}}\s?[-/.]\s?{_D}{{2,4}}))")
+
+
+def refine(items):
+    """For OCR items that carry per-step probabilities (medscan.ocr.Reader), re-read every
+    RAMQ-like and date-like part of the line under its pattern (medscan.ctc) and put the
+    result back in the text. Returns (items as (bbox, text, conf), ramq_paths) where
+    ramq_paths[ramq] = (frames, t0, t1, log-prob) lets the name cross-check ask
+    'how likely is it that these 4 letters were really the name's code?'."""
+    out, paths = [], {}
+    for it in items:
+        b, t, c = it[:3]
+        frames = it[3] if len(it) > 3 else None
+        if not frames:
+            out.append((b, t, c))
+            continue
+        sp = ctc.spans(frames)
+        if "".join(s[0] for s in sp) != t:
+            out.append((b, t, c))
+            continue
+        edits = []  # (score, start, end, new_text)
+        for m in RAMQ_SPAN.finditer(t):
+            g, i, j = m[1], m.start(1), m.end(1)
+            if sum(ch.isalpha() for ch in g[:5]) < 2 or sum(ch.isdigit() for ch in g) < 4:
+                continue
+            t0, t1 = ctc.window(frames, sp, i, j - 1)
+            txt, total, n = ctc.decode(frames, ctc.RAMQ, t0, t1)
+            if txt:
+                r = re.sub(r"[\s\-]", "", txt).upper()
+                if is_valid(r) and total / max(1, n) > -0.8:
+                    edits.append((total / n, i, j, txt.upper()))
+                    paths[r] = (frames, t0, t1, total)
+        for m in DATE_SPAN.finditer(t):
+            g, i, j = m[1], m.start(1), m.end(1)
+            if sum(ch.isdigit() for ch in g) < 4:
+                continue
+            t0, t1 = ctc.window(frames, sp, i, j - 1)
+            best = None
+            for pat in (ctc.DATE_YMD, ctc.DATE_DMY):
+                txt, total, n = ctc.decode(frames, pat, t0, t1)
+                if txt and parse_dates(txt) and (best is None or total > best[0]):
+                    best = (total, n, txt)
+            if best and best[0] / max(1, best[1]) > -0.8:
+                edits.append((best[0] / best[1], i, j, best[2]))
+        # apply the best non-overlapping edits, right to left
+        chosen = []
+        for e in sorted(edits, reverse=True):
+            if all(e[2] <= o[1] or e[1] >= o[2] for o in chosen):
+                chosen.append(e)
+        for _, i, j, new in sorted(chosen, key=lambda e: -e[1]):
+            t = t[:i] + new + t[j:]
+        out.append((b, t, c))
+    return out, paths
+
+
+def letters_plausible(paths, ramq, code, max_drop=6.0):
+    """Could the RAMQ's 4 letters really be `code`? Re-read them forced to `code` and compare
+    with the best free read: a small log-prob drop means the model had `code` as a close
+    second guess (e.g. J 0.40 behind 3 0.45). None = no probabilities to judge with."""
+    if ramq not in paths:
+        return None
+    frames, t0, t1, total = paths[ramq]
+    txt, forced, _ = ctc.decode(frames, ctc.ramq_fixed(code), t0, t1)
+    if not txt:
+        return False, None
+    return total - forced <= max_drop, re.sub(r"[\s\-]", "", txt).upper()
 
 
 def fold(s):
@@ -57,11 +131,12 @@ def rows(items):
         while changed:
             changed = False
             for j, (b2, t2, c2) in enumerate(items):
-                if used[j] or abs((b2[1] + b2[3]) / 2 - cy) > 0.5 * h:
-                    continue
+                h2 = b2[3] - b2[1]
+                if used[j] or abs((b2[1] + b2[3]) / 2 - cy) > 0.5 * h or max(h, h2) > 1.4 * min(h, h2):
+                    continue  # other line, or different text size (a header next to a sticker)
                 x0, x1 = min(g[0][0] for g in group), max(g[0][2] for g in group)
                 gap = max(b2[0] - x1, x0 - b2[2])
-                if gap < 1.2 * h:
+                if gap < 0.8 * h:  # about a word space; more than that = another column
                     group.append((b2, t2, c2))
                     used[j] = changed = True
         group.sort(key=lambda g: g[0][0])
@@ -204,6 +279,8 @@ TO_LETTER = {"0": "O", "1": "I", "5": "S", "8": "B", "6": "G", "4": "A", "3": "E
 def _clean_name_tokens(text):
     """Apply the name rules to a line; returns tokens or None if this can't be a name."""
     t = text.strip().strip(".,;:")
+    t = re.sub(r"^(?:M|Mme|Mlle|Mr|Mrs|Ms|Madame|Monsieur)\.?\s+", "", t, flags=re.I)  # titles
+    t = re.sub(r"(?<=[^\W\d_])[.;]\s", ", ", t)  # 'DUBÉ. Marie-Ève': OCR read the comma as a period
     toks = t.replace(",", " , ").split()
     if sum(ch.isdigit() for ch in t) > 1:
         return None
@@ -259,18 +336,20 @@ def name_candidates(rs):
         ft = fold(t)
         label_bonus = 0.0
         body = t
-        m = re.match(r"\s*([^\W\d_][^\W\d_ .]*(?: [^\W\d_]+)?)\s*[:.]\s*(.*)$", t)
+        m = re.match(r"\s*([^\W\d_][^\W\d_ .]*(?: [^\W\d_]+)?)\s*([:.])\s*(.*)$", t)
         if m:
             if fuzzy_in(m[1], NAME_LABELS):
-                label_bonus, body = 1.5, m[2]
+                label_bonus, body = 1.5, m[3]
             elif fuzzy_in(m[1], GIVEN_LABELS):
-                given_lab = (m[2], c, b)
+                if m[3].strip():
+                    given_lab = (m[3], c, b)
                 continue
-            elif len(m[1]) <= 12 and not fuzzy_in(m[1], list(HONORIFICS)):
-                continue  # 'Allergie : ...', 'Plan : ...' -> some other field
+            elif m[2] == ":" and len(m[1]) <= 12 and not fuzzy_in(m[1], list(HONORIFICS)):
+                continue  # 'Allergie : ...', 'Plan : ...' -> some other field ('DUBÉ. Marie' is not)
         first_word = ft.split()[0] if ft.split() else ""
         if fuzzy_in(first_word, GIVEN_LABELS, 0.8):
-            given_lab = (t.split(None, 1)[1] if len(t.split()) > 1 else "", c, b)
+            if len(t.split()) > 1:  # a lone 'PRÉNOM' piece must not erase the full line
+                given_lab = (t.split(None, 1)[1], c, b)
             continue
         if fuzzy_in(first_word, ["NOM"], 0.99) and len(t.split()) >= 2:
             last_lab = (t.split(None, 1)[1], c, b)
@@ -345,12 +424,14 @@ def _top(cands, k):
 
 
 def extract(items):
+    items, paths = refine(items)
     rs = rows(items)
+    rs += [it for it in items if it not in rs]  # also each piece alone, in case a merge was wrong
     names = _top(name_candidates(rs), 8) + [None]
     ramqs = _top(ramq_candidates(rs), 4) + [None]
     dobs = _top(dob_candidates(rs), 5) + [None]
 
-    best, best_s = None, -1e9
+    best, best_s, memo = None, -1e9, {}
     for n, r, d in product(names, ramqs, dobs):
         s = sum(c.score for c in (n, r, d) if c is not None)
         ag_name = ag_dob = False
@@ -359,14 +440,23 @@ def extract(items):
             code = name_code(n.value[2], n.value[0])
             if code == r.value[:4]:
                 ag_name, s = True, s + 4
-            elif len(code) == 4 and all(lookalike(a, b) for a, b in zip(code, r.value[:4])):
-                cand = code + r.value[4:]
-                if is_valid(cand):  # repair the RAMQ letters from the name we read
+            elif len(code) == 4:
+                # repair the RAMQ letters from the name, if the reader finds that plausible
+                if (r.value, code) not in memo:
+                    memo[(r.value, code)] = letters_plausible(paths, r.value, code)
+                judged = memo[(r.value, code)]
+                if judged is None:  # no probabilities (other engines): look-alike table
+                    ok, cand = all(lookalike(a, b) for a, b in zip(code, r.value[:4])), code + r.value[4:]
+                else:
+                    ok, cand = judged
+                if ok and cand and is_valid(cand):
                     ag_name, fixed_r, s = True, cand, s + 3
+                else:
+                    s -= 2
             else:
                 s -= 2
         if d and r:
-            dd = decode(r.value)
+            dd = decode(fixed_r)
             if (d.value.year % 100, d.value.month, d.value.day) == (dd["yy"], dd["month"], dd["day"]):
                 ag_dob, s = True, s + 4
             else:
@@ -389,9 +479,9 @@ def extract(items):
         out.middle = Field(nice_case(middle), nc * 0.9 if middle else nc)
         out.last = Field(nice_case(last), nc)
     if d and (ag_dob or d.score >= 1.5):  # an unlabelled, unconfirmed date is probably not the DOB
-        out.dob = Field(d.value, 0.98 if ag_dob else min(0.9, 0.3 + 0.15 * d.score))
+        out.dob = Field(d.value, 0.98 if ag_dob else min(0.6, 0.2 + 0.1 * d.score))
     if r:
-        rc = 0.5 + 0.2 * ag_name + 0.28 * ag_dob
+        rc = 0.3 + 0.3 * ag_name + 0.38 * ag_dob  # a RAMQ nothing confirms is weak evidence
         out.ramq = Field(fixed_r, rc, ["letters match name"] * ag_name + ["digits match DOB"] * ag_dob)
         out.sex = decode(fixed_r)["sex"]
     return out

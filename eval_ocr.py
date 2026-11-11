@@ -58,7 +58,13 @@ def load_easy():
     return run
 
 
-ENGINES = {"rapid": load_rapid, "easy": load_easy}
+def load_rapidp():
+    """RapidOCR stages run one by one so the per-step probabilities are kept (medscan.ocr)."""
+    from medscan.ocr import Reader
+    return Reader()
+
+
+ENGINES = {"rapid": load_rapid, "rapidp": load_rapidp, "easy": load_easy}
 
 
 def camera_like(img, seed):
@@ -120,7 +126,7 @@ def text_near(ocr, box, pad=6):
 # ---------- scoring ----------
 
 def score_doc(truth, ocr, stats):
-    page_text = " ".join(t for _, t, _ in ocr)
+    page_text = " ".join(o[1] for o in ocr)
     page_words = defaultdict(int)
     for w in words(page_text):
         page_words[w] += 1
@@ -209,7 +215,7 @@ def main():
                     if i <= args.save_camera:
                         cv2.imwrite(str(docs / f"{k}_camera.jpg"), img)
                 # boxes back to the clean page's coordinates, where the ground truth lives
-                cache[k] = [([v / s for v in b], t, c) for b, t, c in run(img)]
+                cache[k] = [([v / s for v in it[0]], *it[1:]) for it in run(img)]
                 print(f"\r{name}: {i}/{len(todo)}", end="", flush=True)
             secs = time.time() - t0
             cache["_secs"] = secs / len(todo)

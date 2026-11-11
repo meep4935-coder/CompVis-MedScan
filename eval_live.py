@@ -25,7 +25,7 @@ from pathlib import Path
 import cv2
 
 from eval_extract import _middle_shown
-from eval_ocr import camera_like, load_rapid
+from eval_ocr import ENGINES, camera_like
 from medscan.extract import extract
 from medscan.vote import Voter
 
@@ -48,13 +48,14 @@ def main():
     ap.add_argument("--views", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--min-views", type=int, default=3)
+    ap.add_argument("--engine", default="rapidp", help="rapid (plain) or rapidp (with probabilities)")
     args = ap.parse_args()
 
     docs = Path(args.docs)
     keys = sorted(p.stem for p in docs.glob("doc_*.json"))
     if args.limit:
         keys = keys[:args.limit]
-    cache_file = docs / "ocr_rapid_views.json"
+    cache_file = docs / f"ocr_{args.engine}_views.json"
     cache = json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {}
     run = None
     for i, k in enumerate(keys, 1):
@@ -62,9 +63,9 @@ def main():
             ck = f"{k}/{v}"
             if ck in cache:
                 continue
-            run = run or load_rapid()
+            run = run or ENGINES[args.engine]()
             img, s = camera_like(cv2.imread(str(docs / f"{k}.jpg")), seed=int(k.split("_")[1]) * 100 + v)
-            cache[ck] = [([x / s for x in b], t, c) for b, t, c in run(img)]
+            cache[ck] = [([x / s for x in it[0]], *it[1:]) for it in run(img)]
         print(f"\rOCR {i}/{len(keys)}", end="", flush=True)
     cache_file.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     print()
