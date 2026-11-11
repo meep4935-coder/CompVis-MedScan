@@ -276,7 +276,7 @@ QUEBEC MONTREAL LAVAL""".split())
 TO_LETTER = {"0": "O", "1": "I", "5": "S", "8": "B", "6": "G", "4": "A", "3": "E", "7": "T", "2": "Z"}
 
 
-def _clean_name_tokens(text):
+def _clean_name_tokens(text, min_words=2):
     """Apply the name rules to a line; returns tokens or None if this can't be a name."""
     t = text.strip().strip(".,;:")
     t = re.sub(r"^(?:M|Mme|Mlle|Mr|Mrs|Ms|Madame|Monsieur)\.?\s+", "", t, flags=re.I)  # titles
@@ -288,7 +288,7 @@ def _clean_name_tokens(text):
     while toks and fold(toks[0]).rstrip(".") in HONORIFICS:
         toks = toks[1:]
     words = [w for w in toks if w != ","]
-    if not 2 <= len(words) <= 5:
+    if not min_words <= len(words) <= 5:
         return None
     for w in words:
         core = w.strip("'")
@@ -370,6 +370,32 @@ def name_candidates(rs):
         if g and lt:
             out.append(Cand((g[0], " ".join(g[1:]), last_lab[0].strip()), 3.0,
                             f"{last_lab[0]} / {given_lab[0]}", min(last_lab[1], given_lab[1]), last_lab[2]))
+    out += stacked_names(rs)
+    return out
+
+
+def stacked_names(rs):
+    """Cards often print the family name and the given names on two unlabelled lines:
+        TREMBLAY
+        MARIE-ÈVE ANNE
+    Pairs of left-aligned, close, short all-capital name lines become candidates in both
+    orders (family name first is more common); the RAMQ cross-check settles which is which."""
+    lines = []
+    for b, t, c in rs:
+        toks = _clean_name_tokens(t, min_words=1)
+        if toks and "," not in toks and len(toks) <= 3 and all(w.isupper() for w in toks):
+            lines.append((b, toks, c, t))
+    lines.sort(key=lambda l: l[0][1])
+    out = []
+    for (b1, t1, c1, s1), (b2, t2, c2, s2) in zip(lines, lines[1:]):
+        h = max(b1[3] - b1[1], b2[3] - b2[1])
+        if abs(b1[0] - b2[0]) > 0.8 * h or not (0 <= b2[1] - b1[3] < 1.2 * h):
+            continue
+        conf = min(c1, c2)
+        if len(t1) == 1:  # family name above (hyphenated names are one token)
+            out.append(Cand((t2[0], " ".join(t2[1:]), t1[0]), 1.2 + conf * 0.5, f"{s1} / {s2}", conf, b1))
+        if len(t2) == 1:  # given name above
+            out.append(Cand((t1[0], " ".join(t1[1:]), t2[0]), 0.6 + conf * 0.5, f"{s1} / {s2}", conf, b1))
     return out
 
 

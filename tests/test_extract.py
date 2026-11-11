@@ -56,6 +56,18 @@ class TestExtract(unittest.TestCase):
         r = extract(items)
         self.assertEqual((r.last.value, r.first.value, r.middle.value), ("Lemieux", "Geneviève", "Lucie"))
 
+    def test_names_stacked_on_two_lines(self):
+        r = extract(page("TREMBLAY", "MARIE-ÈVE ANNE", "TREM 8555 1512", "1985-05-15"))
+        self.assertEqual((r.last.value, r.first.value, r.middle.value), ("Tremblay", "Marie-Ève", "Anne"))
+        self.assertTrue(r.agree_name)
+        # given name above family name: the RAMQ letters (GAGL) decide the order
+        r = extract(page("LUC", "GAGNON", "GAGL 7203 1408", "1972-03-14"))
+        self.assertEqual((r.last.value, r.first.value), ("Gagnon", "Luc"))
+
+    def test_stacked_without_ramq_is_low_confidence(self):
+        r = extract(page("GAGNON", "LUC"))
+        self.assertLess(r.last.conf, 0.5)
+
     def test_header_next_to_sticker_not_merged(self):
         items = [([51, 58, 600, 109], "CHU de Québec - Hôpital de l'Enfant-Jésus", 0.99),
                  ([620, 60, 856, 90], "Émilie Élise Cloutier", 0.98),

@@ -498,7 +498,53 @@ def card_texture(tw, th):
             cv2.rectangle(tex, (cx, cy), (cx + tw // 9, cy + th // 6), (60, 170, 210), -1)
         else:
             cv2.rectangle(tex, (0, int(th * 0.15)), (tw, int(th * 0.32)), (20, 20, 20), -1)
+    # Cues seen on provincial health cards, in generic form (no official emblem, flag or title):
+    if random.random() < 0.5:  # title line across the top middle
+        draw_text_rows(tex, random.choice([(120, 50, 0), (20, 20, 20), (255, 255, 255)]),
+                       int(tw * random.uniform(0.2, 0.3)), int(th * 0.02), int(tw * random.uniform(0.7, 0.8)),
+                       int(th * 0.12), gap=(th, th + 1), thick=(2, 3))
+    if random.random() < 0.5:  # shiny bronze / gold foil emblem
+        s = int(th * random.uniform(0.18, 0.32))
+        x = random.choice([int(tw * 0.04), tw - s - int(tw * 0.04), (tw - s) // 2])
+        y = random.choice([int(th * 0.04), int(th * 0.35), th - s - int(th * 0.05)])
+        foil_emblem(tex, x, max(0, y), s)
+    if random.random() < 0.35:  # small blue-and-white flag-like patch
+        fw = int(tw * random.uniform(0.09, 0.15))
+        fh = max(4, int(fw * 0.66))
+        x = random.choice([int(tw * 0.03), tw - fw - int(tw * 0.03)])
+        y = random.choice([int(th * 0.03), th - fh - int(th * 0.04)])
+        cv2.rectangle(tex, (x, y), (x + fw, y + fh), (random.randint(140, 200), random.randint(50, 90), 0), -1)
+        b = max(1, fh // 6)
+        cv2.rectangle(tex, (x + fw // 2 - b // 2, y), (x + fw // 2 + b // 2 + 1, y + fh), (255, 255, 255), -1)
+        cv2.rectangle(tex, (x, y + fh // 2 - b // 2), (x + fw, y + fh // 2 + b // 2 + 1), (255, 255, 255), -1)
     return tex
+
+
+def foil_emblem(tex, x, y, s):
+    """A metallic (bronze/gold) heraldic-lily-like emblem: three petals over a band.
+    Foil reflects light unevenly, so its brightness changes across it and it often flares."""
+    m = np.zeros((s, s), np.uint8)
+    c = s // 2
+    cv2.ellipse(m, (c, int(s * 0.38)), (max(1, s // 8), int(s * 0.34)), 0, 0, 360, 255, -1)        # middle petal
+    for sgn in (-1, 1):                                                                               # side petals
+        cv2.ellipse(m, (c + sgn * int(s * 0.25), int(s * 0.45)), (max(1, s // 9), int(s * 0.25)),
+                    sgn * 35, 0, 360, 255, -1)
+    cv2.rectangle(m, (int(s * 0.18), int(s * 0.62)), (int(s * 0.82), int(s * 0.72)), 255, -1)      # band
+    cv2.ellipse(m, (c, int(s * 0.85)), (max(1, s // 7), max(1, s // 9)), 0, 0, 360, 255, -1)       # foot
+    if random.random() < 0.3:
+        m = cv2.dilate(m, np.ones((3, 3), np.uint8))
+    yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
+    shine = 0.5 + 0.5 * np.sin((xx * random.uniform(-1, 1) + yy) / s * random.uniform(4, 10) + random.uniform(0, 6))
+    dark = np.array(random.choice([(40, 90, 140), (30, 110, 170), (60, 100, 120)]), np.float32)   # bronze / gold (BGR)
+    light = np.array(random.choice([(150, 210, 240), (190, 230, 250), (230, 240, 245)]), np.float32)
+    foil = dark * (1 - shine[..., None]) + light * shine[..., None]
+    h, w = tex.shape[:2]
+    s2y, s2x = min(s, h - y), min(s, w - x)
+    if s2y <= 0 or s2x <= 0:
+        return
+    region = tex[y:y + s2y, x:x + s2x]
+    mm = m[:s2y, :s2x] > 0
+    region[mm] = np.clip(foil[:s2y, :s2x][mm], 0, 255).astype(np.uint8)
 
 
 def render_card(img, owner, idx):
