@@ -38,6 +38,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from medscan.camera import advice as camera_advice, is_black, open_camera
+
 ROOT = Path(__file__).parent
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 CLASS_NAMES = {0: "paper", 1: "label"}
@@ -255,18 +257,32 @@ class Scanner:
 # ----------------------------------------------------------------------------
 def run_stream(sc, args):
     src = int(args.source) if args.source.isdigit() else args.source
-    cap = cv2.VideoCapture(src)
-    if not cap.isOpened():
-        raise SystemExit(f"Could not open video source: {args.source}")
-    if isinstance(src, int):  # ask the webcam for HD: more pixels on the text
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.cam_width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.cam_height)
+    if isinstance(src, int):  # ask the webcam for HD (more pixels on the text); fall back if black
+        cap, note = open_camera(src, args.cam_width, args.cam_height)
+        if cap is None:
+            raise SystemExit(f"No camera gave a picture ({note}). Check:\n{camera_advice()}")
+        print(note)
+    else:
+        cap = cv2.VideoCapture(src)
+        if not cap.isOpened():
+            raise SystemExit(f"Could not open video source: {args.source}")
     writer, fps, t_prev, force = None, 0.0, time.time(), False
+    black_since, warned = None, False
     while True:
         ok, frame = cap.read()
         if not ok:
             break
+        if isinstance(src, int) and is_black(frame):  # the camera went dark while running
+            black_since = black_since or time.time()
+            if time.time() - black_since > 3 and not warned:
+                print(f"The camera picture is black. Check:\n{camera_advice()}")
+                warned = True
+        else:
+            black_since, warned = None, False
         vis, _ = sc.process(frame, track=True, force=force)
+        if black_since and time.time() - black_since > 3:
+            cv2.putText(vis, "Camera picture is black: see the terminal", (10, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         force = False
         vis = sc.overlay_thumb(vis)
         if sc.live:

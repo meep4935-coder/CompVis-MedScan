@@ -247,7 +247,19 @@ bash mac/run_webcam.sh       # phase 1 box detector
 Already cloned? `git pull` then `bash mac/run_scan.sh`.
 
 macOS asks for camera permission for Terminal on first run (System Settings >
-Privacy & Security > Camera). After a retrain on the desktop, run
+Privacy & Security > Camera).
+
+**Black camera picture?** At start the camera is asked for 1920x1080. If it gives
+only black frames, scan.py tries the camera's own size, then the other cameras, and
+prints which one it used (`camera 0: 1280x720`) or a checklist if none works:
+- Quit other apps using the camera, and any earlier scan window.
+- Open the lid.
+- Allow Terminal in System Settings > Privacy & Security > Camera.
+- If an iPhone is nearby (Continuity Camera), try `--source 1`.
+
+If the picture goes black while running, the window says so.
+
+After a retrain on the desktop, run
 `python make_bundle.py` (copies the new weights into `models/`), commit, push,
 and `git pull` on the Mac. No git? The same command writes
 `dist/CompV_bundle.zip` to copy over by USB/cloud.
