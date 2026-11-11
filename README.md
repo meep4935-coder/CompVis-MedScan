@@ -101,6 +101,12 @@ python scan.py --source captures/clip.mp4 --read --auto-accept --no-show   # no 
 bash mac/run_read.sh                                     # on the Mac
 ```
 
+The reading models (PaddleOCR, ONNX format) are run by `onnxruntime` when it is installed,
+otherwise by OpenCV's DNN module (`medscan/ocr.py`): same output to about 1e-6, about 1.5x
+slower, but available everywhere OpenCV is (e.g. Intel Macs, or Python versions without
+an onnxruntime build). Force one with `MEDSCAN_OCR_BACKEND=opencv` or `onnxruntime`.
+The first run downloads the models (~18 MB).
+
 Reading runs in a background thread on each tracked sheet's new views (and on the whole
 frame when no sheet is detected). Each sheet shows `reading (n views)` or *text too small:
 bring closer*; a confident record appears in a bar: **Enter** accept, **Backspace / r**

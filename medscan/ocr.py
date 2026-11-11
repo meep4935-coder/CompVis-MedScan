@@ -13,14 +13,75 @@ Each item returned: (bbox [x0, y0, x1, y1], text, confidence, frames)
     frames = per time step, the top characters as [[char, prob], ...]; "" is blank.
 """
 
+import importlib.util
+import os
+from pathlib import Path
+
 import cv2
 import numpy as np
 
 TOPK = 4
+DICTS = Path(__file__).parent / "dicts"
+
+
+def pick_backend():
+    """'onnxruntime' when installed, else 'opencv' (OpenCV's DNN module runs the same ONNX
+    model files: same output to ~1e-6, similar speed, and it installs everywhere OpenCV does,
+    e.g. Intel Macs or Python versions onnxruntime has no build for).
+    Force one with the environment variable MEDSCAN_OCR_BACKEND=opencv|onnxruntime."""
+    forced = os.environ.get("MEDSCAN_OCR_BACKEND")
+    if forced:
+        return forced
+    return "onnxruntime" if importlib.util.find_spec("onnxruntime") else "opencv"
+
+
+def _use_opencv_engine():
+    """Make RapidOCR run its models with cv2.dnn instead of onnxruntime."""
+    from rapidocr.inference_engine.base import FileInfo, InferSession
+    from rapidocr.utils.download_file import DownloadFile, DownloadFileInput
+    from rapidocr.utils.log import logger
+
+    class CvInferSession(InferSession):
+        def __init__(self, cfg):
+            model_path = cfg.get("model_path", None)
+            if model_path is None:  # same default models / download as RapidOCR's ONNX engine
+                root = Path(cfg.get("model_root_dir"))
+                root.mkdir(parents=True, exist_ok=True)
+                info = self.get_model_url(FileInfo(engine_type=cfg.engine_type, ocr_version=cfg.ocr_version,
+                                                   task_type=cfg.task_type, lang_type=cfg.lang_type,
+                                                   model_type=cfg.model_type))
+                model_path = root / Path(info["model_dir"]).name
+                DownloadFile.run(DownloadFileInput(file_url=info["model_dir"], sha256=info["SHA256"],
+                                                   save_path=model_path, logger=logger))
+            self.model_path = Path(model_path)
+            self.net = cv2.dnn.readNetFromONNX(str(self.model_path))
+
+        def __call__(self, x):
+            self.net.setInput(np.ascontiguousarray(x, dtype=np.float32))
+            return self.net.forward()
+
+        # the character list lives in the ONNX metadata, which cv2 can't read: kept in medscan/dicts
+        def _dict(self):
+            return DICTS / f"{self.model_path.stem}.txt"
+
+        def have_key(self, key="character"):
+            return key == "character" and self._dict().exists()
+
+        def get_character_list(self, key="character"):
+            return self._dict().read_bytes().decode("utf-8").splitlines()
+
+    import rapidocr.ch_ppocr_cls.main as cls_m
+    import rapidocr.ch_ppocr_det.main as det_m
+    import rapidocr.ch_ppocr_rec.main as rec_m
+    for m in (det_m, rec_m, cls_m):
+        m.get_engine = lambda engine_type: CvInferSession
 
 
 class Reader:
-    def __init__(self, lang="latin", model="mobile"):
+    def __init__(self, lang="latin", model="mobile", backend=None):
+        self.backend = backend or pick_backend()
+        if self.backend == "opencv":
+            _use_opencv_engine()
         from rapidocr import LangRec, ModelType, OCRVersion, RapidOCR
         self.eng = RapidOCR(params={"Rec.lang_type": LangRec(lang), "Rec.ocr_version": OCRVersion.PPOCRV5,
                                     "Rec.model_type": ModelType(model)})

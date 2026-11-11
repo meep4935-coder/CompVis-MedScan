@@ -8,5 +8,9 @@
 set -e
 cd "$(dirname "$0")/.."
 source .venv/bin/activate
-python -c "import rapidocr, onnxruntime" 2>/dev/null || pip install -r requirements.txt
+if ! python -c "import rapidocr" 2>/dev/null; then
+    pip install "rapidocr>=3.0"
+    # optional: runs the reading models a bit faster; not available on every Mac / Python
+    pip install onnxruntime 2>/dev/null || echo "onnxruntime not available here: OpenCV will run the models (same results)"
+fi
 python scan.py --source 0 --read "$@"
