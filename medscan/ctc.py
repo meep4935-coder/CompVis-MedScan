@@ -52,9 +52,10 @@ def window(frames, sp, i, j):
     return t0, t1
 
 
-def decode(frames, pattern, t0=0, t1=None):
+def decode(frames, pattern, t0=0, t1=None, with_probs=False):
     """Best path over frames[t0..t1] whose text fits `pattern`, a list of (allowed_chars,
-    optional) positions. Returns (text, total log-prob, steps) or (None, -inf, steps)."""
+    optional) positions. Returns (text, total log-prob, steps) or (None, -inf, steps);
+    with_probs=True adds each character's probability (its best step) as a 4th item."""
     t1 = len(frames) - 1 if t1 is None else t1
     L = len(pattern)
     # positions reachable right after position k (skipping optional ones)
@@ -98,16 +99,21 @@ def decode(frames, pattern, t0=0, t1=None):
 
     ends = [(s, st) for st, (s, _) in best.items() if st[0] in final]
     if not ends:
-        return None, -math.inf, len(history)
+        return (None, -math.inf, len(history)) + (([],) if with_probs else ())
     score, st = max(ends)
     # backtrack: collect the char at each step where the state's position advanced
-    text, steps = [], len(history)
+    text, probs, steps, run = [], [], len(history), 0.0
     for t in range(steps - 1, -1, -1):
         s, back = history[t][st]
-        if st[1] and (back[0] != st[0] or back[1] != st[1]):
-            text.append(st[1])
+        if st[1]:
+            run = max(run, math.exp(logp(frames[t0 + t], st[1])))  # how sure, at its best step
+            if back[0] != st[0] or back[1] != st[1]:
+                text.append(st[1])
+                probs.append(run)
+                run = 0.0
         st = back
-    return "".join(reversed(text)), score, steps
+    out = ("".join(reversed(text)), score, steps)
+    return out + ((list(reversed(probs)),) if with_probs else ())
 
 
 def pos(chars, optional=False):

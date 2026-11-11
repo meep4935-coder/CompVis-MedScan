@@ -19,6 +19,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 
+from medscan.extract import confident_still
 from medscan.ramq import decode, name_code
 
 FIELDS = ("last", "first", "middle", "dob", "ramq")
@@ -46,6 +47,8 @@ class Voter:
     counts: dict = field(default_factory=lambda: {f: defaultdict(int) for f in FIELDS})
     shown: dict = field(default_factory=lambda: {f: {} for f in FIELDS})
     dob_read: set = field(default_factory=set)  # DOB values seen printed (vs. worked out from RAMQ)
+    require_sure: bool = False  # tried: in simulated live sessions it cost 2 right and fixed no wrong
+    sure: set = field(default_factory=set)      # (name, RAMQ) that some single view was sure of
     rejected: list = field(default_factory=list)
     views: int = 0
     proposal: dict = None
@@ -70,7 +73,14 @@ class Voter:
             self.shown[f].setdefault(key, val)  # how to display it ('Tremblay', not 'tremblay')
             if f == "dob" and getattr(reading, "dob_source", "read") == "read":
                 self.dob_read.add(key)
+        if confident_still(reading):  # this single view alone was sure of its name and RAMQ
+            self.sure.add(self._who(reading.last.value, reading.first.value, reading.middle.value,
+                                    reading.ramq.value))
         return self._maybe_propose()
+
+    @staticmethod
+    def _who(last, first, middle, ramq):
+        return ((last or "").casefold(), " ".join(x for x in (first, middle) if x).casefold(), ramq)
 
     def _winner(self, f):
         if not self.votes[f]:
@@ -95,6 +105,10 @@ class Voter:
             rec["sex"] = d["sex"]
         # was the DOB ever actually read off the page, or only worked out from the RAMQ?
         rec["dob_source"] = "read" if rec["dob"] and rec["dob"].isoformat() in self.dob_read else "ramq"
+        # a misread repeated in every view wins the vote; also ask that at least one view was
+        # individually sure of exactly this name and RAMQ (medscan.extract.confident_still)
+        if self.require_sure and self._who(rec["last"], rec["first"], rec["middle"], rec["ramq"]) not in self.sure:
+            return None
         sig = self._sig(rec)
         if sig in self.rejected:
             return None
@@ -118,6 +132,7 @@ class Voter:
         self.counts = {f: defaultdict(int) for f in FIELDS}
         self.shown = {f: {} for f in FIELDS}
         self.dob_read = set()
+        self.sure = set()
         self.views = 0
         if len(self.rejected) >= self.max_rejects:
             return "need_better_view"

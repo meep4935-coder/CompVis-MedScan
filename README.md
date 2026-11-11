@@ -92,6 +92,36 @@ Results on 92 fake pages degraded like a webcam (single page → live with votin
 | wrong proposals | — | 2 (handwritten names misread the same way every time) |
 | proposed from a page missing a field | — | 0 |
 
+### External check: a friend's synthetic clinical notes
+
+[ramq-synthetic-dataset](https://github.com/OuifakElWarrari/ramq-synthetic-dataset) (1000
+MSSS-style forms, ID block typed / handwritten / mixed / **embossed**, 1–3 **decoy NAMs**
+per page, camera-style degradations) is cloned into the git-ignored `data/external/`.
+
+```bash
+python eval_external.py --split test   # also: val, train, all; --no-gate to see raw agreement
+```
+
+A still image can't wait for more views, so each one is **proposed** only when name, RAMQ
+and DOB agree *and* the parts no cross-check covers are backed by the page
+(`medscan.extract.confident_still`): the name beyond the RAMQ's letters, the RAMQ's two
+administrative digits, and all its digits when the DOB had to be worked out from it. Each
+must be read identically on 2+ separate lines, or have its least certain character read
+with confidence ≥ 0.85 (name) / 0.90 (digits). Those thresholds were chosen on the
+train split only.
+Everything else is **skipped** with a reason, listed per image in
+`data/external/ramq-synthetic-dataset/medscan_report_<split>.csv`.
+
+| split | right | wrong (of which accent only) | skipped | RAMQ alone | decoy picked |
+|---|---|---|---|---|---|
+| train (800, thresholds picked here) | 90.0% | 1.6% (0.9%) | 8.4% | 98.9% | 0 |
+| **val (100, held out)** | **86%** | **2% (1%)** | 12% | 100% | 0 |
+| test (100, used while fixing the logic) | 92% | 0% | 8% | 100% | 0 |
+
+The paper detector doesn't find these pages (they fill the whole image, with no
+surroundings, which it never saw in training); the whole image is read instead, as the
+live loop's whole-view fallback does.
+
 ### Live: `scan.py --read`
 
 ```bash

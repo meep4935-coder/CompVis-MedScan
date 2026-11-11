@@ -26,7 +26,7 @@ from pathlib import Path
 
 import cv2
 
-from medscan.extract import extract, refine
+from medscan.extract import confident_still, extract, refine
 from medscan.ramq import decode, find_ramq_loose
 
 
@@ -37,7 +37,8 @@ def truth_of(row):
             "yy": d["yy"], "month": d["month"], "day": d["day"], "sex": d["sex"]}
 
 
-def judge(rd, t, decoys):
+def judge(rd, t, decoys, gate=None):
+    """gate = (t_name, t_digits) for medscan.extract.confident_still, or None (no gate)."""
     got = rd.as_dict()
     name_ok = (got["last"] or "").casefold() == t["last"].casefold() and \
               (got["first"] or "").casefold() == t["first"].casefold()
@@ -49,8 +50,15 @@ def judge(rd, t, decoys):
     ramq_ok = got["ramq"] == t["ramq"]
     complete = bool(got["last"] and got["first"] and got["ramq"] and dob)
     from_ramq = got["dob_source"] == "ramq"
-    if complete and got["agree_name"] and (got["agree_dob"] or from_ramq):
-        outcome = "right" if (name_ok and dob_ok and ramq_ok) else "WRONG"
+    agree = complete and got["agree_name"] and (got["agree_dob"] or from_ramq)
+    all_ok = name_ok and dob_ok and ramq_ok
+    ungated = ("right" if all_ok else "WRONG") if agree else "skip"
+    if agree and gate and not confident_still(rd, *gate):
+        outcome = "skip"
+        name_sure = rd.name_lines >= 2 or rd.name_letter_conf >= gate[0]
+        reason = "not sure enough: " + ("RAMQ digits" if name_sure else "name")
+    elif agree:
+        outcome = ungated
         reason = "" if outcome == "right" else ",".join(
             f for f, ok in (("name", name_ok), ("ramq", ramq_ok), ("dob", dob_ok)) if not ok)
     else:
@@ -68,7 +76,10 @@ def judge(rd, t, decoys):
     return {"outcome": outcome, "reason": reason, "ramq_got": got["ramq"] or "", "ramq_ok": ramq_ok,
             "decoy_chosen": got["ramq"] in decoys, "name_got": f"{got['last']}, {got['first']}",
             "name_ok": name_ok, "dob_got": dob.isoformat() if dob else "", "dob_ok": dob_ok,
-            "dob_from_ramq": from_ramq, "name_accent_only": name_accent_only}
+            "dob_from_ramq": from_ramq, "name_accent_only": name_accent_only,
+            "name_letter_conf": got["name_letter_conf"], "name_lines": got["name_lines"],
+            "ramq_digit_conf": got["ramq_digit_conf"], "ramq_lines": got["ramq_lines"],
+            "outcome_ungated": ungated}
 
 
 def main():
@@ -76,6 +87,9 @@ def main():
     ap.add_argument("--dataset", default="data/external/ramq-synthetic-dataset/output")
     ap.add_argument("--split", default="test", help="train / val / test / all")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--t-name", type=float, default=0.85, help="still-image gate: name letter confidence")
+    ap.add_argument("--t-digits", type=float, default=0.9, help="still-image gate: RAMQ digit confidence")
+    ap.add_argument("--no-gate", action="store_true", help="propose whenever the fields agree")
     ap.add_argument("--no-detect", dest="detect", action="store_false",
                     help="skip the paper-detector check")
     args = ap.parse_args()
@@ -105,7 +119,8 @@ def main():
                 cache_file.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
         items = cache[row["id"]]
         t = truth_of(row)
-        res = judge(extract(items), t, set(row.get("decoy_nams", [])))
+        gate = None if args.no_gate else (args.t_name, args.t_digits)
+        res = judge(extract(items), t, set(row.get("decoy_nams", [])), gate)
         fixed, _ = refine(items)
         res["readable"] = t["ramq"] in find_ramq_loose(" ".join(it[1] for it in fixed))
         if args.detect:
@@ -144,8 +159,13 @@ def main():
           f"{sum(r['dob_from_ramq'] for r in prop)}")
     print(f"  skipped            {oc['skip']:4d}  {100 * oc['skip'] / n:5.1f}%")
     sk = [r for r in report if r["outcome"] == "skip"]
-    print(f"    unreadable (true RAMQ not in OCR text): {sum(not r['readable'] for r in sk)}")
-    print(f"    readable but logic missed:             {sum(r['readable'] for r in sk)}")
+    unsure = [r for r in sk if r["reason"].startswith("not sure")]
+    print(f"    unreadable (true RAMQ not in OCR text):  {sum(not r['readable'] for r in sk)}")
+    print(f"    deliberate: fields agree but not sure:   {len(unsure)}"
+          f"  (would have been {sum(r['outcome_ungated'] == 'right' for r in unsure)} right,"
+          f" {sum(r['outcome_ungated'] == 'WRONG' for r in unsure)} wrong)")
+    print(f"    readable, a field not found (logic gap): "
+          f"{sum(r['readable'] and not r['reason'].startswith('not sure') for r in sk)}")
     for reason, c in Counter(r["reason"] for r in sk).most_common():
         print(f"      {reason:34} {c}")
     print(f"  RAMQ alone right (their benchmark)  {sum(r['ramq_ok'] for r in report)}/{n};"

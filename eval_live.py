@@ -48,6 +48,7 @@ def main():
     ap.add_argument("--views", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--min-views", type=int, default=3)
+    ap.add_argument("--sure", action="store_true", help="also require one individually sure view")
     ap.add_argument("--engine", default="rapidp", help="rapid (plain) or rapidp (with probabilities)")
     args = ap.parse_args()
 
@@ -80,7 +81,7 @@ def main():
         want = truth_record(truth["patient"])
         if not _middle_shown(truth):
             want["middle"] = ""  # not written on this page: 'no middle name' is the right read
-        voter = Voter(min_views=args.min_views)
+        voter = Voter(min_views=args.min_views, require_sure=args.sure)
         used, done = 0, False
         for v in range(args.views):
             used += 1

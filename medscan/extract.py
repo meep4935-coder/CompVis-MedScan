@@ -65,11 +65,11 @@ def refine(items):
             if sum(ch.isalpha() for ch in g[:5]) < 2 or sum(ch.isdigit() for ch in g) < 4:
                 continue
             t0, t1 = ctc.window(frames, sp, i, j - 1)
-            txt, total, n = ctc.decode(frames, ctc.RAMQ, t0, t1)
+            txt, total, n, probs = ctc.decode(frames, ctc.RAMQ, t0, t1, with_probs=True)
             if txt:
                 r = re.sub(r"[\s\-]", "", txt).upper()
                 if is_valid(r) and total / max(1, n) > -0.8:
-                    edits.append((total / n, i, j, txt.upper()))
+                    edits.append((total / n, i, j, txt.upper(), probs))
                     paths[r] = (frames, t0, t1, total)
         for m in DATE_SPAN.finditer(t):
             g, i, j = m[1], m.start(1), m.end(1)
@@ -78,19 +78,19 @@ def refine(items):
             t0, t1 = ctc.window(frames, sp, i, j - 1)
             best = None
             for pat in (ctc.DATE_YMD, ctc.DATE_DMY):
-                txt, total, n = ctc.decode(frames, pat, t0, t1)
+                txt, total, n, probs = ctc.decode(frames, pat, t0, t1, with_probs=True)
                 if txt and parse_dates(txt) and (best is None or total > best[0]):
-                    best = (total, n, txt)
+                    best = (total, n, txt, probs)
             if best and best[0] / max(1, best[1]) > -0.8:
-                edits.append((best[0] / best[1], i, j, best[2]))
+                edits.append((best[0] / best[1], i, j, best[2], best[3]))
         # apply the best non-overlapping edits, right to left
         chosen = []
-        for e in sorted(edits, reverse=True):
+        for e in sorted(edits, key=lambda e: e[0], reverse=True):
             if all(e[2] <= o[1] or e[1] >= o[2] for o in chosen):
                 chosen.append(e)
-        for score, i, j, new in sorted(chosen, key=lambda e: -e[1]):
+        for score, i, j, new, probs in sorted(chosen, key=lambda e: -e[1]):
             t = t[:i] + new + t[j:]
-            cp = cp[:i] + [math.exp(score)] * len(new) + cp[j:]  # re-read part: its mean step prob
+            cp = cp[:i] + (probs if len(probs) == len(new) else [math.exp(score)] * len(new)) + cp[j:]
         out.append((b, t, c, cp))
     return out, paths
 
@@ -214,14 +214,41 @@ RAMQ_LABELS = ["NAM", "RAMQ", "NO RAMQ", "ASS. MALADIE", "NO ASS. MALADIE", "ASS
 
 
 def ramq_candidates(rs):
+    """Cand.conf = the reader's confidence in the RAMQ's least certain DIGIT: the letters are
+    checked against the name, but nothing checks the last two (administrative) digits, and
+    nothing checks the date digits when no DOB is printed."""
     out = []
-    for i, (b, t, c, *_) in enumerate(rs):
+    for row in rs:
+        b, t, c = row[:3]
         for r in find_ramq_loose(t):
             s = 1.0 + c
             if re.search(r"\b(NAM|RAMQ|RAMO|MALADIE|ASS)\b", fold(t)):
                 s += 1.0
-            out.append(Cand(r, s, t, c, b))
+            out.append(Cand(r, s, t, digit_conf(row, r), b))
     return out
+
+
+def digit_conf(row, ramq):
+    """Lowest per-character probability among the 8 digits of `ramq` as written in the row
+    ('TREM 8555 1512', 'TREM85551512', 'TREM-8555-1512'); the row confidence if not found."""
+    t, c = row[1], row[2]
+    cp = row[3] if len(row) > 3 else None
+    m = re.search(rf"{ramq[:4]}[\s\-]?{ramq[4:8]}[\s\-]?{ramq[8:]}", t, re.I)
+    if not m or not cp or len(cp) != len(t):
+        return c * 0.8
+    return min(p for ch, p in zip(t[m.start():m.end()], cp[m.start():m.end()]) if ch.isdigit())
+
+
+def lines_count(boxes):
+    """How many separate lines on the page: boxes whose vertical centres are within half a
+    line height of each other are the same line (a labelled row and its bare value piece)."""
+    centres = []
+    for b in boxes:
+        cy, h = (b[1] + b[3]) / 2, b[3] - b[1]
+        if not any(abs(cy - y) < 0.5 * max(h, hh) and (min(b[2], x1) - max(b[0], x0)) > -h
+                   for y, hh, x0, x1 in centres):
+            centres.append((cy, h, b[0], b[2]))
+    return len(centres)
 
 
 MONTHS = {"JANVIER": 1, "JAN": 1, "FEVRIER": 2, "FEV": 2, "MARS": 3, "MAR": 3, "AVRIL": 4, "AVR": 4,
@@ -387,6 +414,11 @@ def name_candidates(rs):
             if fold(lab[1]) == "NOM" and "," not in body and len(body.split()) == 1:
                 last_lab = (body, c, b, r)  # 'Nom: SAVOIE' -> given names are on the 'Prénom' line
                 continue
+            pieces = body.split()
+            if fold(lab[1]) == "NOM" and "," not in body and body.isupper() and min(map(len, pieces)) <= 4:
+                # 'Nom: LAROU CHE': block capitals with wide letter spacing came back in pieces;
+                # also try them joined as one family name, to pair with the 'Prénom' line
+                last_lab = ("".join(pieces), c, b, r)
             label_bonus = 1.5
             m = None
         else:
@@ -494,12 +526,18 @@ class Reading:
     agree_name: bool = False
     agree_dob: bool = False
     dob_source: str = "read"  # "read" off the page, or worked out "ramq" (no DOB printed / readable)
+    name_letter_conf: float = 0.0  # reader's confidence in the chosen name's least certain letter
+    name_lines: int = 0            # separate lines on the page that read exactly this name
+    ramq_digit_conf: float = 0.0   # reader's confidence in the RAMQ's least certain digit
+    ramq_lines: int = 0            # separate lines on the page that read exactly this RAMQ
 
     def as_dict(self):
         return {"first": self.first.value, "middle": self.middle.value, "last": self.last.value,
                 "dob": self.dob.value.isoformat() if self.dob.value else None, "ramq": self.ramq.value,
                 "sex": self.sex, "agree_name": self.agree_name, "agree_dob": self.agree_dob,
-                "dob_source": self.dob_source,
+                "dob_source": self.dob_source, "name_letter_conf": round(self.name_letter_conf, 3),
+                "name_lines": self.name_lines, "ramq_digit_conf": round(self.ramq_digit_conf, 3),
+                "ramq_lines": self.ramq_lines,
                 "conf": {k: round(getattr(self, k).conf, 2) for k in ("last", "first", "dob", "ramq")}}
 
 
@@ -517,7 +555,8 @@ def extract(items):
     rs += [it for it in items if it not in rs]  # also each piece alone, in case a merge was wrong
     all_names = name_candidates(rs)
     names = _top(all_names, 8) + [None]
-    ramqs = _top(ramq_candidates(rs), 4) + [None]
+    all_ramqs = ramq_candidates(rs)
+    ramqs = _top(all_ramqs, 4) + [None]
     dobs = _top(dob_candidates(rs), 5) + [None]
 
     best, best_s, memo = None, -1e9, {}
@@ -557,8 +596,10 @@ def extract(items):
     out = Reading(agree_name=ag_name, agree_dob=ag_dob)
     if n:
         first, middle, last = n.value
+        out.name_letter_conf, out.name_lines = n.conf, 1
         if ag_name:  # several readings of the same name on the page: keep the cleanest
-            first, middle, last = name_consensus(all_names, fixed_r[:4], (first, middle, last))
+            first, middle, last, out.name_letter_conf, out.name_lines = name_consensus(
+                all_names, fixed_r[:4], (first, middle, last))
         if ag_name:
             # the RAMQ only proves the first 3 letters + initial; the rest rests on the OCR
             nc = 0.75 + 0.2 * n.conf
@@ -575,9 +616,24 @@ def extract(items):
         rc = 0.3 + 0.3 * ag_name + 0.38 * ag_dob  # a RAMQ nothing confirms is weak evidence
         out.ramq = Field(fixed_r, rc, ["letters match name"] * ag_name + ["digits match DOB"] * ag_dob)
         out.sex = decode(fixed_r)["sex"]
+        same = [c for c in all_ramqs if c.value in (r.value, fixed_r)]
+        out.ramq_digit_conf = max(c.conf for c in same)
+        out.ramq_lines = lines_count([c.bbox for c in same])
         if out.dob.value is None and ag_name:
             dob_from_ramq(out, fixed_r)
     return out
+
+
+def confident_still(rd, t_name=0.85, t_digits=0.9):
+    """For ONE still image (no further views to vote with): the parts that no cross-check
+    covers must be backed by the page itself, either read identically on 2+ separate lines,
+    or read with high confidence in their least certain character:
+      - the name beyond the RAMQ's letters (e.g. 'Patncia' vs 'Patricia'),
+      - the RAMQ's 2 administrative digits, and all 8 digits when the DOB came from the RAMQ.
+    The thresholds are chosen on a training split (see eval_external.py --sweep)."""
+    name_ok = rd.name_lines >= 2 or rd.name_letter_conf >= t_name
+    ramq_ok = rd.ramq_lines >= 2 or rd.ramq_digit_conf >= t_digits
+    return name_ok and ramq_ok
 
 
 def _squash(s):
@@ -602,12 +658,12 @@ def name_consensus(cands, code, chosen):
     for c in cands:
         f, m, l = c.value
         if name_code(l, f) == code:
-            pool.append((f, m, l, c.conf, c.text))
+            pool.append((f, m, l, c.conf, c.bbox))
     if len(pool) < 2:
-        return chosen
+        return chosen + _evidence(pool, chosen)
 
     def pick(values):
-        """values: (string, conf, text) -> the cleanest string of the best-supported group."""
+        """values: (string, conf, bbox) -> the cleanest string of the best-supported group."""
         groups = []
         for v in values:
             for g in groups:
@@ -616,7 +672,8 @@ def name_consensus(cands, code, chosen):
                     break
             else:
                 groups.append([v])
-        best = max(groups, key=lambda g: sum({t: c for _, c, t in g}.values()))  # each line counts once
+        # support: each physical line counts once (a labelled row and its bare piece are one line)
+        best = max(groups, key=lambda g: (lines_count([b for _, _, b in g]), max(c for _, c, _ in g)))
         min_sp = min(s.count(" ") for s, _, _ in best)
 
         def accent_wins(s):  # 'Marie-Ève' over 'MARIE-EVE' (same letters, accents kept)
@@ -624,10 +681,21 @@ def name_consensus(cands, code, chosen):
 
         return max(best, key=lambda v: (-(v[0].count(" ") - min_sp), accent_wins(v[0]), v[1]))[0]
 
-    last = pick([(l, c, t) for f, m, l, c, t in pool])
-    given = pick([(" ".join(x for x in (f, m) if x), c, t) for f, m, l, c, t in pool])
+    last = pick([(l, c, b) for f, m, l, c, b in pool])
+    given = pick([(" ".join(x for x in (f, m) if x), c, b) for f, m, l, c, b in pool])
     gw = given.split()
-    return (gw[0], " ".join(gw[1:]), last) if gw else chosen
+    name = (gw[0], " ".join(gw[1:]), last) if gw else chosen
+    if name_code(name[2], name[0]) != code:  # the two picks must still make a name that fits the RAMQ
+        name = chosen
+    return name + _evidence(pool, name)
+
+
+def _evidence(pool, name):
+    """How well-supported is this exact spelling? (least-certain-letter confidence of the best
+    reading of it, number of separate lines that read it; letters compared without spaces)."""
+    key = (_squash(name[2]), _squash(name[0] + name[1]))
+    same = [(c, b) for f, m, l, c, b in pool if (_squash(l), _squash(f + m)) == key]
+    return (max(c for c, _ in same) if same else 0.0), lines_count([b for _, b in same])
 
 
 def dob_from_ramq(out, ramq):
