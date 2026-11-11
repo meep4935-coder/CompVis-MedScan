@@ -102,7 +102,9 @@ class LiveReader:
                     v = self.voters.setdefault(sid, Voter(min_views=self.min_views))
                     rec = v.add(reading)
                     self.n_reads += 1
-                    if rec and sid not in self.pending:
+                    if rec and self._already_handled(rec["ramq"], sid):
+                        v.accept()  # same patient seen through another sheet / the whole view
+                    elif rec and sid not in self.pending:
                         self.pending.append(sid)
                 if self.verbose:
                     d = reading.as_dict()
@@ -112,6 +114,14 @@ class LiveReader:
                 print(f"[read {sid}] error: {e}")
             finally:
                 self.busy = False
+
+    def _already_handled(self, ramq, sid):
+        """Is this patient already accepted, or already waiting for a tap from another sheet?
+        (Called with the lock held.)"""
+        if any(a.get("ramq") == ramq for a in self.accepted):
+            return True
+        return any(o != sid and self.voters[o].proposal and self.voters[o].proposal.get("ramq") == ramq
+                   for o in self.pending if o in self.voters)
 
     # ---------------------------------------------------------- one-tap confirm
     def current(self):

@@ -776,14 +776,17 @@ def make_sample(real_bgs):
 
 
 def main():
+    global CARD_P
     ap = argparse.ArgumentParser()
     ap.add_argument("--train", type=int, default=3000)
     ap.add_argument("--val", type=int, default=400)
     ap.add_argument("--out", type=Path, default=ROOT / "data" / "paper")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--card-share", type=float, default=CARD_P, help="share of paper objects drawn as plastic cards")
     ap.add_argument("--preview", action="store_true", help="draw outlines on a few samples into out/preview")
     args = ap.parse_args()
 
+    CARD_P = args.card_share
     random.seed(args.seed)
     np.random.seed(args.seed)
     real_bgs = load_real_backgrounds()

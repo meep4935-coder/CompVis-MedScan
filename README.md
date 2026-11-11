@@ -162,6 +162,16 @@ scan.py                ->  outlines + track IDs + flattened scans in captures/sc
    drew every sheet, its exact outline is known for free.
    - **Labels** (class 1): product/pharmacy labels wrapped around bottles (with
      cylinder curvature + shine) or stuck on 3D boxes, often clear plastic.
+   - **Plastic cards** (class 0, 30% of "paper"): made-up wallet-size cards with rounded
+     corners, coloured designs, a photo box, small text, heavy glare, rainbow hologram
+     sheen, a bronze foil emblem, a blue-and-white flag-like patch, a centered title, and
+     often a thumb over the edge. These are generic cues of provincial health cards, not
+     a copy of any real card. Fine-tuned from the paper model for 12 epochs (1.3 h CPU):
+
+     | unseen synthetic scenes | old: cards found | new: cards found | old mask mAP50-95 | new |
+     |---|---|---|---|---|
+     | cards only | 62.5% | **95.4%** | 0.595 | **0.891** |
+     | paper only | 92.4% | 93.6% | 0.912 | 0.903 |
    - **Hard negatives** (never labelled): curtains with folds, walls/doors,
      bare bottles and boxes, pens, blobs. These teach the model what paper is *not*.
 2. **Transfer learning.** `train.py` fine-tunes `yolo11n-seg.pt`. The pretrained
