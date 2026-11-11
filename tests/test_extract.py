@@ -72,6 +72,34 @@ class TestExtract(unittest.TestCase):
         self.assertEqual((r.last.value, r.first.value), ("Côté-Lavoie", "Jean-François"))
         self.assertTrue(r.agree_name and r.agree_dob)
 
+    def test_form_labels(self):
+        # 'Nom complet' with and without a colon; the mother and emergency contact are decoys
+        r = extract(page("Mère: THIBODEAU, MATHILDE", "Nom complet: ST-LAURENT, Maxime",
+                         "Contact urgence: Colette Paré", "NAM: STLM 5256 1950", "DDN: 1952-06-19"))
+        self.assertEqual((r.last.value, r.first.value), ("St-Laurent", "Maxime"))
+        r = extract(page("Nom complet TANGUAY. Aurelie", "TANA 1003 1959", "DDN 2010-03-19"))
+        self.assertEqual((r.last.value, r.first.value), ("Tanguay", "Aurelie"))
+
+    def test_label_and_value_in_separate_boxes(self):
+        items = [([908, 121, 946, 139], "Nom:", 0.99), ([976, 118, 1120, 145], "SAVOIE", 0.98),
+                 ([906, 146, 964, 166], "Prénom:", 0.99), ([976, 145, 1080, 168], "LAURENT", 0.97),
+                 ([908, 173, 946, 190], "DDN:", 0.99), ([975, 173, 1046, 193], "1947-03-31", 0.99),
+                 ([908, 200, 950, 218], "NAM:", 0.99), ([975, 198, 1120, 220], "SAVL 4703 3194", 0.99),
+                 ([113, 605, 291, 624], "Date/heure: 2026-06-20 20:14", 0.99)]
+        r = extract(items)
+        self.assertEqual((r.last.value, r.first.value), ("Savoie", "Laurent"))
+        self.assertEqual(r.dob.value, date(1947, 3, 31))
+        self.assertTrue(r.agree_name and r.agree_dob)
+
+    def test_dob_from_ramq_when_not_printed(self):
+        r = extract(page("Nom complet: DUVAL, Nicole", "NAM: DUVN 0404 1395"))
+        self.assertEqual((r.dob.value, r.dob_source), (date(2004, 4, 13), "ramq"))
+        # never when the name doesn't confirm the RAMQ, or when a printed DOB disagrees
+        self.assertIsNone(extract(page("Nom complet: MARTIN, Luc", "NAM: DUVN 0404 1395")).dob.value)
+        r = extract(page("Nom complet: DUVAL, Nicole", "NAM: DUVN 0404 1395", "DDN: 2004-04-14"))
+        self.assertEqual(r.dob_source, "read")
+        self.assertFalse(r.agree_dob)
+
     def test_stacked_without_ramq_is_low_confidence(self):
         r = extract(page("GAGNON", "LUC"))
         self.assertLess(r.last.conf, 0.5)

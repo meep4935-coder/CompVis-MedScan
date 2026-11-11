@@ -71,7 +71,7 @@ def main():
     print()
 
     full = {"n": 0, "accepted": 0, "wrong": 0, "none": 0, "views": [], "after_reject": 0, "hint": 0}
-    partial = {"n": 0, "proposed": 0}
+    partial = {"n": 0, "proposed": 0, "dob_from_ramq_right": 0}
     wrong_examples = []
     for k in keys:
         truth = json.loads((docs / f"{k}.json").read_text(encoding="utf-8"))
@@ -88,8 +88,12 @@ def main():
             if not rec:
                 continue
             if not complete:
-                partial["proposed"] += 1
-                wrong_examples.append((k, "proposed from an incomplete page", rec))
+                only_dob_missing = "ramq" in on_page and bool(on_page & {"name", "last_name", "given_names"})
+                if only_dob_missing and rec.get("dob_source") == "ramq" and same(rec, want):
+                    partial["dob_from_ramq_right"] += 1  # allowed: DOB worked out from the NAM, shown as such
+                else:
+                    partial["proposed"] += 1
+                    wrong_examples.append((k, "proposed from an incomplete page", rec))
                 done = True
                 break
             if same(rec, want):
@@ -122,7 +126,9 @@ def main():
     print(f"  no proposal yet       {full['none']:4d}  {100 * full['none'] / n:5.1f}%")
     if vs:
         print(f"  views needed: median {vs[len(vs) // 2]}, max {vs[-1]}")
-    print(f"Pages missing a field: {partial['n']}, proposed on their own: {partial['proposed']} (should be 0)")
+    print(f"Pages missing a field: {partial['n']}")
+    print(f"  no DOB printed, proposed right with the DOB worked out from the NAM: {partial['dob_from_ramq_right']}")
+    print(f"  any other proposal from an incomplete page: {partial['proposed']} (should be 0)")
     for e in wrong_examples[:10]:
         print("   ", e)
 

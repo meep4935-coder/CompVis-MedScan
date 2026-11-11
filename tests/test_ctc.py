@@ -47,5 +47,22 @@ class TestCTC(unittest.TestCase):
         self.assertTrue(r.agree_name and r.agree_dob)
 
 
+class TestNameEvidence(unittest.TestCase):
+    def test_letter_spaced_header_merged_with_typed_line(self):
+        # block capitals with wide letter spacing come back in pieces ('SÉBAS TIEN')
+        lines = ["Nom: GAGNON", "Prénom: SÉBAS TIEN", "NAM: GAGS 9011 2188", "Patient: GAGNON, Sébastien"]
+        items = [([20, 40 * i, 600, 40 * i + 30], t, 0.95, frames_for(t)) for i, t in enumerate(lines)]
+        r = extract(items)
+        self.assertEqual((r.first.value, r.middle.value, r.last.value), ("Sébastien", "", "Gagnon"))
+
+    def test_least_certain_letter_decides(self):
+        # 'Peme' (rr read as m, with low confidence) vs a clean 'PIERRE' in the ID block
+        typed = "Patient: TURGEON, Peme"
+        unsure = {typed.index("m"): [["m", 0.35], ["r", 0.3], ["", 0.2]]}
+        lines = [("Nom: TURGEON", None), ("Prénom: PIERRE", None), ("NAM: TURP 1505 1855", None), (typed, unsure)]
+        items = [([20, 40 * i, 600, 40 * i + 30], t, 0.95, frames_for(t, o)) for i, (t, o) in enumerate(lines)]
+        self.assertEqual(extract(items).first.value, "Pierre")
+
+
 if __name__ == "__main__":
     unittest.main()

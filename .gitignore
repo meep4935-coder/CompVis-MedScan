@@ -8,3 +8,4 @@ captures/
 !models/*.pt
 data/docs*/
 runs_*.log
+data/external/

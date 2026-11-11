@@ -18,6 +18,7 @@ This module deliberately does NOT use the generator's name lists: it must work o
 """
 
 import difflib
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -49,12 +50,15 @@ def refine(items):
         b, t, c = it[:3]
         frames = it[3] if len(it) > 3 else None
         if not frames:
-            out.append((b, t, c))
+            out.append((b, t, c, [c] * len(t)))
             continue
         sp = ctc.spans(frames)
         if "".join(s[0] for s in sp) != t:
-            out.append((b, t, c))
+            out.append((b, t, c, [c] * len(t)))
             continue
+        # how sure the reader was of each letter: its best probability over the steps it spans
+        cp = [max(p for ch, p in sum((frames[k] for k in range(t0, t1 + 1)), []) if ch == s)
+              for s, t0, t1 in sp]
         edits = []  # (score, start, end, new_text)
         for m in RAMQ_SPAN.finditer(t):
             g, i, j = m[1], m.start(1), m.end(1)
@@ -84,9 +88,10 @@ def refine(items):
         for e in sorted(edits, reverse=True):
             if all(e[2] <= o[1] or e[1] >= o[2] for o in chosen):
                 chosen.append(e)
-        for _, i, j, new in sorted(chosen, key=lambda e: -e[1]):
+        for score, i, j, new in sorted(chosen, key=lambda e: -e[1]):
             t = t[:i] + new + t[j:]
-        out.append((b, t, c))
+            cp = cp[:i] + [math.exp(score)] * len(new) + cp[j:]  # re-read part: its mean step prob
+        out.append((b, t, c, cp))
     return out, paths
 
 
@@ -117,34 +122,68 @@ def fuzzy_in(word, choices, cutoff=0.75):
 def rows(items):
     """Merge OCR boxes that sit side by side on one text line (EasyOCR returns words).
     Large horizontal gaps keep separate columns apart."""
-    items = sorted(items, key=lambda o: (o[0][1] + o[0][3]) / 2)
+    items = sorted((_with_letter_probs(o) for o in items), key=lambda o: (o[0][1] + o[0][3]) / 2)
     used = [False] * len(items)
     out = []
-    for i, (b, t, c) in enumerate(items):
+    for i, (b, t, c, cp) in enumerate(items):
         if used[i]:
             continue
         used[i] = True
-        group = [(b, t, c)]
+        group = [(b, t, c, cp)]
         h = b[3] - b[1]
         cy = (b[1] + b[3]) / 2
         changed = True
         while changed:
             changed = False
-            for j, (b2, t2, c2) in enumerate(items):
+            for j, (b2, t2, c2, cp2) in enumerate(items):
+                if used[j] or abs((b2[1] + b2[3]) / 2 - cy) > 0.5 * h:
+                    continue  # another line
                 h2 = b2[3] - b2[1]
-                if used[j] or abs((b2[1] + b2[3]) / 2 - cy) > 0.5 * h or max(h, h2) > 1.4 * min(h, h2):
-                    continue  # other line, or different text size (a header next to a sticker)
                 x0, x1 = min(g[0][0] for g in group), max(g[0][2] for g in group)
+                # a form label ('Nom:', 'DDN:') takes the value to its right even across a wide
+                # gap and in another text size (values are often bold or handwritten)
+                label = max(group, key=lambda g: g[0][2])[1].rstrip().endswith(":") and b2[0] >= x1 - 2
+                if max(h, h2) > (2.5 if label else 1.4) * min(h, h2):
+                    continue  # different text size: e.g. a header next to a sticker
                 gap = max(b2[0] - x1, x0 - b2[2])
-                if gap < 0.8 * h:  # about a word space; more than that = another column
-                    group.append((b2, t2, c2))
+                if gap < (6 * h if label else 0.8 * h):  # ~ a word space; more = another column
+                    group.append((b2, t2, c2, cp2))
                     used[j] = changed = True
         group.sort(key=lambda g: g[0][0])
         box = [min(g[0][0] for g in group), min(g[0][1] for g in group),
                max(g[0][2] for g in group), max(g[0][3] for g in group)]
         conf = sum(g[2] for g in group) / len(group)
-        out.append((box, " ".join(g[1] for g in group), conf))
+        cps = []
+        for g in group:
+            cps += ([1.0] if cps else []) + list(g[3])  # the joining space is certain
+        out.append((box, " ".join(g[1] for g in group), conf, cps))
     return out
+
+
+def _with_letter_probs(o):
+    """(bbox, text, conf[, letter_probs]) -> always 4 parts; without per-letter probabilities
+    (other engines, tests) every letter gets the line's confidence."""
+    b, t, c = o[:3]
+    cp = o[3] if len(o) > 3 else None
+    ok = isinstance(cp, list) and len(cp) == len(t) and all(isinstance(p, (int, float)) for p in cp)
+    return (b, t, c, cp if ok else [c] * len(t))
+
+
+def word_conf(r, word):
+    """The reader's doubt about a word: the LOWEST probability among its letters in row r
+    (one misread letter, 'Pierre' -> 'Peme', shows as one unsure letter; a line average
+    hides it). Falls back to the row's confidence, lowered if the word isn't found as read
+    (e.g. a digit was turned into a letter)."""
+    t, c = r[1], r[2]
+    cp = r[3] if len(r) > 3 else None
+    if not cp or len(cp) != len(t):
+        return c
+    i = t.find(word)
+    if i < 0:
+        i = t.upper().find(word.upper())
+    if i < 0:
+        return c * 0.7
+    return min(cp[i:i + len(word)]) if word else c
 
 
 def above(rs, r):
@@ -176,7 +215,7 @@ RAMQ_LABELS = ["NAM", "RAMQ", "NO RAMQ", "ASS. MALADIE", "NO ASS. MALADIE", "ASS
 
 def ramq_candidates(rs):
     out = []
-    for i, (b, t, c) in enumerate(rs):
+    for i, (b, t, c, *_) in enumerate(rs):
         for r in find_ramq_loose(t):
             s = 1.0 + c
             if re.search(r"\b(NAM|RAMQ|RAMO|MALADIE|ASS)\b", fold(t)):
@@ -246,7 +285,7 @@ def parse_dates(text):
 def dob_candidates(rs):
     out = []
     for r in rs:
-        b, t, c = r
+        b, t, c = r[:3]
         ft = fold(t)
         for x, sure in parse_dates(t):
             s = sure + c * 0.5
@@ -265,7 +304,11 @@ def dob_candidates(rs):
     return out
 
 
-NAME_LABELS = ["NOM", "PATIENT", "PATIENTE", "NOM DU PATIENT", "NAME", "USAGER", "BENEFICIAIRE"]
+NAME_LABELS = ["NOM", "PATIENT", "PATIENTE", "NOM DU PATIENT", "NAME", "USAGER", "BENEFICIAIRE", "NOM COMPLET"]
+# labels in front of the patient's name on forms, with or without ':' ("Nom complet TANGUAY, Aurélie")
+NAME_LABEL_RE = re.compile(
+    r"^\s*(nom\s+complet|nom\s+du\s+patient|nom\s+de\s+l'usager|nom\s+et\s+pr[eéèêë]noms?|nom\s*,\s*pr[eéèêë]noms?"
+    r"|patiente?|usag[eè]re?|b[ée]n[ée]ficiaire|nom)(?![^\W\d_])\s*[:.\-]?\s*", re.I)
 GIVEN_LABELS = ["PRENOM", "PRENOMS"]
 HONORIFICS = {"MME", "M", "M.", "MR", "MRS", "MS", "MLLE", "MADAME", "MONSIEUR"}
 STOP = set("""HOPITAL CENTRE CHU CHUM CUSM CISSS CIUSSS INSTITUT CLINIQUE GMF PHARMACIE CARTE NOTE NOTES
@@ -332,27 +375,35 @@ def name_candidates(rs):
     out = []
     last_lab = given_lab = None
     for r in rs:
-        b, t, c = r
+        b, t, c = r[:3]
         ft = fold(t)
         label_bonus = 0.0
         body = t
-        m = re.match(r"\s*([^\W\d_][^\W\d_ .]*(?: [^\W\d_]+)?)\s*([:.])\s*(.*)$", t)
+        lab = NAME_LABEL_RE.match(t)
+        if lab:
+            body = t[lab.end():].strip()
+            if not body:
+                continue
+            if fold(lab[1]) == "NOM" and "," not in body and len(body.split()) == 1:
+                last_lab = (body, c, b, r)  # 'Nom: SAVOIE' -> given names are on the 'Prénom' line
+                continue
+            label_bonus = 1.5
+            m = None
+        else:
+            m = re.match(r"\s*([^\W\d_][^\W\d_ .]*(?: [^\W\d_]+)?)\s*([:.])\s*(.*)$", t)
         if m:
             if fuzzy_in(m[1], NAME_LABELS):
                 label_bonus, body = 1.5, m[3]
             elif fuzzy_in(m[1], GIVEN_LABELS):
                 if m[3].strip():
-                    given_lab = (m[3], c, b)
+                    given_lab = (m[3], c, b, r)
                 continue
             elif m[2] == ":" and len(m[1]) <= 12 and not fuzzy_in(m[1], list(HONORIFICS)):
                 continue  # 'Allergie : ...', 'Plan : ...' -> some other field ('DUBÉ. Marie' is not)
         first_word = ft.split()[0] if ft.split() else ""
         if fuzzy_in(first_word, GIVEN_LABELS, 0.8):
             if len(t.split()) > 1:  # a lone 'PRÉNOM' piece must not erase the full line
-                given_lab = (t.split(None, 1)[1], c, b)
-            continue
-        if fuzzy_in(first_word, ["NOM"], 0.99) and len(t.split()) >= 2:
-            last_lab = (t.split(None, 1)[1], c, b)
+                given_lab = (t.split(None, 1)[1], c, b, r)
             continue
         up = above(rs, r)
         if up and fuzzy_in(fold(up[1]).strip(" :"), NAME_LABELS):
@@ -362,14 +413,17 @@ def name_candidates(rs):
         toks = _clean_name_tokens(body)
         if not toks:
             continue
+        wc = min(word_conf(r, w) for w in toks if w != ",")  # its least certain letter
         for (first, middle, last), prior in _splits(toks):
-            out.append(Cand((first, middle, last), prior + label_bonus + c * 0.5, t, c, b))
-    if last_lab and given_lab:  # card layout: 'NOM LEMIEUX' / 'PRÉNOM GENEVIÈVE LUCIE'
-        g = given_lab[0].split()
-        lt = _clean_name_tokens(last_lab[0] + " X")
+            out.append(Cand((first, middle, last), prior + label_bonus + wc * 0.5, t, wc, b))
+    if last_lab and given_lab:  # card / form layout: 'NOM LEMIEUX' / 'PRÉNOM GENEVIÈVE LUCIE'
+        g = _clean_name_tokens(given_lab[0], min_words=1) or []
+        g = [w for w in g if w != ","]
+        lt = _clean_name_tokens(last_lab[0], min_words=1)
         if g and lt:
-            out.append(Cand((g[0], " ".join(g[1:]), last_lab[0].strip()), 3.0,
-                            f"{last_lab[0]} / {given_lab[0]}", min(last_lab[1], given_lab[1]), last_lab[2]))
+            wc = min([word_conf(last_lab[3], w) for w in lt] + [word_conf(given_lab[3], w) for w in g])
+            out.append(Cand((g[0], " ".join(g[1:]), last_lab[0].strip()), 2.5 + wc * 0.5,
+                            f"{last_lab[0]} / {given_lab[0]}", wc, last_lab[2]))
     out += stacked_names(rs)
     return out
 
@@ -381,17 +435,23 @@ def stacked_names(rs):
     Pairs of left-aligned, close, short all-capital name lines become candidates in both
     orders (family name first is more common); the RAMQ cross-check settles which is which."""
     lines = []
-    for b, t, c in rs:
+    for r in rs:
+        b, t, c = r[:3]
+        if t.rstrip().endswith(":"):
+            continue  # a label ('DDN:' misread as 'DON:'), not a name
         toks = _clean_name_tokens(t, min_words=1)
-        if toks and "," not in toks and len(toks) <= 3 and all(w.isupper() for w in toks):
-            lines.append((b, toks, c, t))
+        if toks and "," not in toks and len(toks) <= 3 and all(w.isupper() and len(w) >= 2 for w in toks):
+            lines.append((b, toks, min(word_conf(r, w) for w in toks), t))
     lines.sort(key=lambda l: l[0][1])
     out = []
-    for (b1, t1, c1, s1), (b2, t2, c2, s2) in zip(lines, lines[1:]):
+    # every pair, not just neighbours in top-to-bottom order: other text at the same height
+    # elsewhere on the page ('MSSS' logo on the left) must not hide the pair
+    pairs = [(a, b) for i, a in enumerate(lines) for b in lines[i + 1:]]
+    for (b1, t1, c1, s1), (b2, t2, c2, s2) in pairs:
         h = max(b1[3] - b1[1], b2[3] - b2[1])
-        if abs(b1[0] - b2[0]) > 0.8 * h or not (0 <= b2[1] - b1[3] < 1.2 * h):
+        if abs(b1[0] - b2[0]) > 0.8 * h or not (-0.4 * h <= b2[1] - b1[3] < 1.2 * h):
             continue
-        conf = min(c1, c2)
+        conf = min(c1, c2)  # least certain letter of either line
         if len(t1) == 1:  # family name above (hyphenated names are one token)
             out.append(Cand((t2[0], " ".join(t2[1:]), t1[0]), 1.2 + conf * 0.5, f"{s1} / {s2}", conf, b1))
         if len(t2) == 1:  # given name above
@@ -433,11 +493,13 @@ class Reading:
     sex: str = None
     agree_name: bool = False
     agree_dob: bool = False
+    dob_source: str = "read"  # "read" off the page, or worked out "ramq" (no DOB printed / readable)
 
     def as_dict(self):
         return {"first": self.first.value, "middle": self.middle.value, "last": self.last.value,
                 "dob": self.dob.value.isoformat() if self.dob.value else None, "ramq": self.ramq.value,
                 "sex": self.sex, "agree_name": self.agree_name, "agree_dob": self.agree_dob,
+                "dob_source": self.dob_source,
                 "conf": {k: round(getattr(self, k).conf, 2) for k in ("last", "first", "dob", "ramq")}}
 
 
@@ -453,7 +515,8 @@ def extract(items):
     items, paths = refine(items)
     rs = rows(items)
     rs += [it for it in items if it not in rs]  # also each piece alone, in case a merge was wrong
-    names = _top(name_candidates(rs), 8) + [None]
+    all_names = name_candidates(rs)
+    names = _top(all_names, 8) + [None]
     ramqs = _top(ramq_candidates(rs), 4) + [None]
     dobs = _top(dob_candidates(rs), 5) + [None]
 
@@ -494,6 +557,8 @@ def extract(items):
     out = Reading(agree_name=ag_name, agree_dob=ag_dob)
     if n:
         first, middle, last = n.value
+        if ag_name:  # several readings of the same name on the page: keep the cleanest
+            first, middle, last = name_consensus(all_names, fixed_r[:4], (first, middle, last))
         if ag_name:
             # the RAMQ only proves the first 3 letters + initial; the rest rests on the OCR
             nc = 0.75 + 0.2 * n.conf
@@ -510,4 +575,76 @@ def extract(items):
         rc = 0.3 + 0.3 * ag_name + 0.38 * ag_dob  # a RAMQ nothing confirms is weak evidence
         out.ramq = Field(fixed_r, rc, ["letters match name"] * ag_name + ["digits match DOB"] * ag_dob)
         out.sex = decode(fixed_r)["sex"]
+        if out.dob.value is None and ag_name:
+            dob_from_ramq(out, fixed_r)
     return out
+
+
+def _squash(s):
+    return re.sub(r"\s+", "", fold(s))
+
+
+def _close(a, b):
+    """Same name read twice? Equal once spaces are removed ('SÉBAS TIEN' = 'Sébastien'),
+    or within ~1 edit per 6 letters ('Genevneve' ~ 'GENEVIEVE')."""
+    a, b = _squash(a), _squash(b)
+    if a == b:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85 and abs(len(a) - len(b)) <= 1
+
+
+def name_consensus(cands, code, chosen):
+    """A page often shows the name more than once (ID block, 'Nom complet:', 'Usager'). Among
+    the readings that match the RAMQ letters, group the ones that are the same name and keep
+    the cleanest: fewest stray spaces (letter-spaced block capitals split into pieces),
+    then the highest OCR confidence, then the one with accents (an accent is rarely invented)."""
+    pool = []
+    for c in cands:
+        f, m, l = c.value
+        if name_code(l, f) == code:
+            pool.append((f, m, l, c.conf, c.text))
+    if len(pool) < 2:
+        return chosen
+
+    def pick(values):
+        """values: (string, conf, text) -> the cleanest string of the best-supported group."""
+        groups = []
+        for v in values:
+            for g in groups:
+                if _close(g[0][0], v[0]):
+                    g.append(v)
+                    break
+            else:
+                groups.append([v])
+        best = max(groups, key=lambda g: sum({t: c for _, c, t in g}.values()))  # each line counts once
+        min_sp = min(s.count(" ") for s, _, _ in best)
+
+        def accent_wins(s):  # 'Marie-Ève' over 'MARIE-EVE' (same letters, accents kept)
+            return s.upper() != fold(s) and any(_squash(o) == _squash(s) and o != s for o, _, _ in best)
+
+        return max(best, key=lambda v: (-(v[0].count(" ") - min_sp), accent_wins(v[0]), v[1]))[0]
+
+    last = pick([(l, c, t) for f, m, l, c, t in pool])
+    given = pick([(" ".join(x for x in (f, m) if x), c, t) for f, m, l, c, t in pool])
+    gw = given.split()
+    return (gw[0], " ".join(gw[1:]), last) if gw else chosen
+
+
+def dob_from_ramq(out, ramq):
+    """No DOB printed / readable, but a RAMQ whose letters match the name: its digits ARE the
+    birth date (YY, MM +50 for women, DD). Only the century is not written: take the most
+    recent one that isn't in the future (a 2-digit year <= this year could also be a
+    centenarian; that case is flagged)."""
+    d = decode(ramq)
+    for century in (2000, 1900):
+        try:
+            x = date(century + d["yy"], d["month"], d["day"])
+        except ValueError:
+            return
+        if x <= TODAY:
+            checks = ["from RAMQ"]
+            if century == 2000 and TODAY.year - (1900 + d["yy"]) <= 110:
+                checks.append("century assumed")
+            out.dob = Field(x, 0.5, checks)
+            out.dob_source = "ramq"
+            return

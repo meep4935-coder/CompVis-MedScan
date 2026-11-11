@@ -45,6 +45,7 @@ class Voter:
     votes: dict = field(default_factory=lambda: {f: defaultdict(float) for f in FIELDS})
     counts: dict = field(default_factory=lambda: {f: defaultdict(int) for f in FIELDS})
     shown: dict = field(default_factory=lambda: {f: {} for f in FIELDS})
+    dob_read: set = field(default_factory=set)  # DOB values seen printed (vs. worked out from RAMQ)
     rejected: list = field(default_factory=list)
     views: int = 0
     proposal: dict = None
@@ -67,6 +68,8 @@ class Voter:
             self.votes[f][key] += max(fv.conf, 0.3)
             self.counts[f][key] += 1
             self.shown[f].setdefault(key, val)  # how to display it ('Tremblay', not 'tremblay')
+            if f == "dob" and getattr(reading, "dob_source", "read") == "read":
+                self.dob_read.add(key)
         return self._maybe_propose()
 
     def _winner(self, f):
@@ -90,6 +93,8 @@ class Voter:
             if rec["dob"] and (rec["dob"].year % 100, rec["dob"].month, rec["dob"].day) != (d["yy"], d["month"], d["day"]):
                 return None
             rec["sex"] = d["sex"]
+        # was the DOB ever actually read off the page, or only worked out from the RAMQ?
+        rec["dob_source"] = "read" if rec["dob"] and rec["dob"].isoformat() in self.dob_read else "ramq"
         sig = self._sig(rec)
         if sig in self.rejected:
             return None
@@ -112,6 +117,7 @@ class Voter:
         self.votes = {f: defaultdict(float) for f in FIELDS}
         self.counts = {f: defaultdict(int) for f in FIELDS}
         self.shown = {f: {} for f in FIELDS}
+        self.dob_read = set()
         self.views = 0
         if len(self.rejected) >= self.max_rejects:
             return "need_better_view"

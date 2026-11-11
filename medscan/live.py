@@ -181,7 +181,8 @@ class LiveReader:
         middle = f" {p['middle']}" if p.get("middle") else ""
         r = p["ramq"]
         txt = (f"{p['last'].upper()}, {p['first']}{middle}   NAM {r[:4]} {r[4:8]} {r[8:]}   "
-               f"DDN {p['dob'].isoformat() if isinstance(p['dob'], date) else p['dob']}   {p.get('sex', '')}")
+               f"DDN {p['dob'].isoformat() if isinstance(p['dob'], date) else p['dob']}"
+               f"{' (from NAM)' if p.get('dob_source') == 'ramq' else ''}   {p.get('sex', '')}")
         _bar(vis, txt, (150, 90, 0), "Enter = accept   Backspace / r = reject")
         return vis
 
