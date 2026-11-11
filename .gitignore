@@ -7,3 +7,4 @@ captures/
 *.pt
 !models/*.pt
 data/docs*/
+runs_*.log

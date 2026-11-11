@@ -35,6 +35,7 @@ import cv2
 import numpy as np
 
 IMG_W, IMG_H = 640, 480
+CARD_P = 0.3  # share of "paper" objects drawn as plastic cards (health / ID / hospital cards)
 ROOT = Path(__file__).parent
 BG_DIR = ROOT / "data" / "backgrounds"
 CLASS_NAMES = {0: "paper", 1: "label"}
@@ -377,11 +378,19 @@ def render_paper(img, owner, idx, real_bgs):
     if random.random() < 0.2:  # crease / fold line
         x = random.randint(tw // 4, 3 * tw // 4)
         tex[:, x:] = (tex[:, x:].astype(np.float32) * random.uniform(0.8, 0.95)).astype(np.uint8)
+    warp_onto(img, owner, idx, tex, mask, glare_p=0.2)
 
+
+def warp_onto(img, owner, idx, tex, mask, glare_p=0.2, scale=(0.4, 1.0)):
+    """Perspective-warp a flat texture (+ its shape mask) into the scene, with shadow,
+    lighting gradient and optional glare. Pixels it covers get owner == idx.
+    Returns the warped bool mask (or None if it ended up off-screen)."""
+    h, w = img.shape[:2]
+    th, tw = tex.shape[:2]
     src = np.float32([[0, 0], [tw, 0], [tw, th], [0, th]])
     cx, cy = random.uniform(-0.1, 1.1) * w, random.uniform(-0.1, 1.1) * h
     ang = random.uniform(0, 2 * np.pi)
-    s = random.uniform(0.4, 1.0)
+    s = random.uniform(*scale)
     R = np.array([[np.cos(ang), -np.sin(ang)], [np.sin(ang), np.cos(ang)]])
     dst = (src - [tw / 2, th / 2]) * s
     dst = dst @ R.T + [cx, cy]
@@ -392,7 +401,7 @@ def render_paper(img, owner, idx, real_bgs):
     wmask = cv2.warpPerspective(mask, M, (w, h), flags=cv2.INTER_NEAREST)
     m = wmask > 127
     if m.sum() < 50:
-        return
+        return None
 
     if random.random() < 0.7:  # drop shadow
         off = np.float32([[1, 0, random.randint(-15, 15)], [0, 1, random.randint(-15, 15)]])
@@ -408,12 +417,130 @@ def render_paper(img, owner, idx, real_bgs):
         g = (xx / w * gx + yy / h * gy)
         light = 1 + (g - g.mean()) * random.uniform(0.2, 0.6)
     paper = np.clip(warped.astype(np.float32) * light[..., None], 0, 255).astype(np.uint8)
-    if random.random() < 0.2:  # glossy / laminated sheet
+    if random.random() < glare_p:  # glossy / laminated sheet
         paper = add_glare(paper, m)
+        if random.random() < 0.3:
+            paper = add_glare(paper, m)
 
     alpha = cv2.GaussianBlur(wmask, (3, 3), 0).astype(np.float32)[..., None] / 255
     img[:] = (paper * alpha + img * (1 - alpha)).astype(np.uint8)
     owner[m] = idx
+    return m
+
+
+# ----------------------------------------------------------------------------
+# Plastic cards (health insurance / ID / hospital cards): counted as paper (class 0)
+# Generic designs only: no real card's layout, logo or emblem.
+# ----------------------------------------------------------------------------
+def hologram(tex, mask):
+    """Rainbow sheen of a security hologram / iridescent laminate: a soft diagonal band
+    whose hue changes along it, blended on top."""
+    th, tw = tex.shape[:2]
+    yy, xx = np.mgrid[0:th, 0:tw].astype(np.float32)
+    a = random.uniform(0, np.pi)
+    d = (xx * np.cos(a) + yy * np.sin(a)) / max(tw, th)
+    hue = ((d * random.uniform(2, 6) + random.random()) % 1.0 * 180).astype(np.uint8)
+    hsv = np.dstack([hue, np.full_like(hue, 200), np.full_like(hue, 255)])
+    rainbow = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).astype(np.float32)
+    c0 = random.uniform(-0.2, 1.2)
+    band = np.exp(-((d - c0) / random.uniform(0.08, 0.35)) ** 2) * random.uniform(0.15, 0.45)
+    band *= mask.astype(np.float32) / 255
+    out = tex.astype(np.float32) * (1 - band[..., None]) + rainbow * band[..., None]
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def card_texture(tw, th):
+    """A made-up plastic card: coloured background with waves, a header band, a photo
+    box with a face-like shape, rows of small text and sometimes a big number line."""
+    base = np.array(random.choice([(170, 110, 40), (200, 150, 90), (90, 140, 40), (60, 60, 170),
+                                   (235, 235, 235), (200, 200, 205), rand_color(0.3)]), np.float32)
+    c2 = np.array(rand_color(0.4), np.float32)
+    g = np.linspace(0, 1, tw, dtype=np.float32)[None, :, None]
+    tex = base * (1 - g * 0.6) + c2 * (g * 0.6)
+    tex = np.repeat(tex, th, 0)
+    yy, xx = np.mgrid[0:th, 0:tw].astype(np.float32)
+    for _ in range(random.randint(0, 4)):  # guilloche-like wavy security lines / bands
+        f, ph, amp = random.uniform(1, 5), random.uniform(0, 6.3), random.uniform(0.05, 0.3)
+        wave = np.abs(yy / th - (0.5 + amp * np.sin(xx / tw * f * 2 * np.pi + ph))) < random.uniform(0.01, 0.08)
+        tex[wave] = tex[wave] * 0.75 + np.array(rand_color(0.5), np.float32) * 0.25
+    tex = tex * (0.9 + 0.1 * smooth_noise(th, tw, 16))
+    tex = np.clip(tex, 0, 255).astype(np.uint8)
+    if random.random() < 0.7:  # header band with a title
+        hb = int(th * random.uniform(0.12, 0.25))
+        cv2.rectangle(tex, (0, 0), (tw, hb), rand_color(), -1)
+        draw_text_rows(tex, (255, 255, 255) if random.random() < 0.6 else (20, 20, 20),
+                       int(tw * 0.05), int(hb * 0.2), int(tw * 0.8), hb, gap=(hb, hb + 1), thick=(2, 4))
+    else:
+        hb = 0
+    ink = random.choice([(20, 20, 20), (60, 30, 10), (255, 255, 255)])
+    photo = random.random() < 0.7
+    px0 = int(tw * random.uniform(0.04, 0.08))
+    if photo:  # photo box with a head-and-shoulders silhouette
+        pw, ph = int(tw * 0.25), int(th * 0.55)
+        py0 = min(th - ph - 2, hb + int(th * 0.08))
+        cv2.rectangle(tex, (px0, py0), (px0 + pw, py0 + ph), rand_color(0.6), -1)
+        skin = random.choice([(150, 180, 220), (110, 140, 190), (70, 100, 140), (40, 60, 90)])
+        cv2.ellipse(tex, (px0 + pw // 2, py0 + int(ph * 0.42)), (pw // 4, int(ph * 0.22)), 0, 0, 360, skin, -1)
+        cv2.ellipse(tex, (px0 + pw // 2, py0 + int(ph * 0.3)), (int(pw * 0.27), int(ph * 0.14)), 0, 180, 360,
+                    rand_color() if random.random() < 0.3 else (30, 30, 40), -1)
+        cv2.ellipse(tex, (px0 + pw // 2, py0 + ph), (int(pw * 0.45), int(ph * 0.3)), 0, 180, 360, rand_color(), -1)
+        tx0 = px0 + pw + int(tw * 0.04)
+    else:
+        tx0 = px0
+    draw_text_rows(tex, ink, tx0, hb + int(th * 0.05), tw - int(tw * 0.04), int(th * 0.8),
+                   gap=(max(6, th // 12), max(7, th // 7)), thick=(1, 2))
+    if random.random() < 0.6:  # the big number line (like an insurance / ID number)
+        y = int(th * random.uniform(0.78, 0.9))
+        draw_text_rows(tex, ink, px0, y - 6, int(tw * 0.75), y + 4, gap=(50, 60), thick=(2, 4))
+    if random.random() < 0.25:  # chip or magnetic stripe
+        if random.random() < 0.5:
+            cx, cy = int(tw * 0.12), int(th * 0.45)
+            cv2.rectangle(tex, (cx, cy), (cx + tw // 9, cy + th // 6), (60, 170, 210), -1)
+        else:
+            cv2.rectangle(tex, (0, int(th * 0.15)), (tw, int(th * 0.32)), (20, 20, 20), -1)
+    return tex
+
+
+def render_card(img, owner, idx):
+    h, w = img.shape[:2]
+    tw = int(np.clip(random.uniform(0.15, 0.65) * min(w, h) * 1.4, 40, 700))
+    th = int(tw / 1.586)  # ID-1 card format, 85.6 x 54 mm
+    tex = card_texture(tw, th)
+    mask = np.zeros((th, tw), np.uint8)
+    r = max(2, int(tw * random.uniform(0.03, 0.06)))  # rounded corners
+    cv2.rectangle(mask, (r, 0), (tw - r, th), 255, -1)
+    cv2.rectangle(mask, (0, r), (tw, th - r), 255, -1)
+    for cx, cy in [(r, r), (tw - r, r), (r, th - r), (tw - r, th - r)]:
+        cv2.circle(mask, (cx, cy), r, 255, -1)
+    if random.random() < 0.15:  # held upright / portrait
+        tex, mask = np.ascontiguousarray(np.rot90(tex)), np.ascontiguousarray(np.rot90(mask))
+    if random.random() < 0.45:
+        tex = hologram(tex, mask)
+    m = warp_onto(img, owner, idx, tex, mask, glare_p=0.7, scale=(0.5, 1.0))
+    if m is not None and random.random() < 0.5:
+        hold_with_fingers(img, owner, m)
+
+
+def hold_with_fingers(img, owner, m):
+    """A thumb / fingers over the card's edge (cards are usually held by hand)."""
+    ys, xs = np.nonzero(m)
+    edge = cv2.morphologyEx(m.astype(np.uint8), cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 0
+    ey, ex = np.nonzero(edge)
+    if len(ex) == 0:
+        return
+    span = max(xs.max() - xs.min(), ys.max() - ys.min())
+    skin = np.array(random.choice([(150, 180, 220), (120, 150, 200), (80, 110, 150), (50, 70, 100)]), np.float32)
+    layer = np.zeros(m.shape, np.uint8)
+    i = random.randrange(len(ex))
+    cx, cy = int(ex[i]), int(ey[i])
+    for k in range(random.randint(1, 3)):
+        a = random.uniform(0, 180)
+        cv2.ellipse(layer, (cx + k * int(span * 0.07), cy + k * int(span * 0.02)),
+                    (max(4, int(span * 0.12)), max(3, int(span * 0.05))), a, 0, 360, 255, -1)
+    f = layer > 0
+    shade = 0.75 + 0.25 * smooth_noise(*m.shape, 32)[..., 0]
+    img[f] = np.clip(skin * shade[f][:, None], 0, 255).astype(np.uint8)
+    owner[f] = -1
 
 
 # ----------------------------------------------------------------------------
@@ -571,7 +698,10 @@ def make_sample(real_bgs):
         idx = len(classes)
         classes.append(cls)
         if cls == 0:
-            render_paper(img, owner, idx, real_bgs)
+            if random.random() < CARD_P:
+                render_card(img, owner, idx)
+            else:
+                render_paper(img, owner, idx, real_bgs)
         else:
             (render_bottle if random.random() < 0.6 else render_box)(img, owner, idx, with_label=True)
 

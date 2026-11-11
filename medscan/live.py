@@ -168,6 +168,9 @@ class LiveReader:
     def draw_bar(self, vis):
         cur = self.current()
         H, W = vis.shape[:2]
+        if "frame" in self.voters and time.time() - self.last_frame_read < 2:
+            cv2.putText(vis, f"whole view: {self.status('frame')}", (10, 55),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
         if not cur:
             if self.accepted:
                 a = self.accepted[-1]

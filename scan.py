@@ -154,6 +154,7 @@ class Scanner:
         self.last_capture = None  # thumbnail shown in the corner
         self.n_forced = 0
         self.live = None
+        self.last_sheet_read = 0.0
         if getattr(args, "read", False):
             from medscan.live import LiveReader
             self.live = LiveReader(self.root, min_views=args.min_views)
@@ -171,8 +172,7 @@ class Scanner:
              else self.model.predict(frame, **kw))[0]
         vis = frame.copy()
         if r.masks is None:
-            if self.live:  # nothing detected: read the whole frame now and then
-                self.live.offer_frame(frame)
+            self._fallback(frame)
             return vis, []
         diag = float(np.hypot(*frame.shape[:2]))
         frame_area = frame.shape[0] * frame.shape[1]
@@ -200,7 +200,8 @@ class Scanner:
                 flat = rectify(frame, raw_quad, None if is_quad else poly)
                 if flat is not None:
                     if self.live and ok:
-                        self.live.offer(name, flat, raw_quad, frame.shape)
+                        if self.live.offer(name, flat, raw_quad, frame.shape):
+                            self.last_sheet_read = time.time()
                     score, sharp, glare = quality(flat, area)
                     now = time.time()
                     if force:
@@ -225,7 +226,14 @@ class Scanner:
             (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             cv2.rectangle(vis, (x, y - th - 10), (x + tw + 6, y), col, -1)
             cv2.putText(vis, txt, (x + 3, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+        self._fallback(frame)
         return vis, found
+
+    def _fallback(self, frame, idle=1.5):
+        """Read the whole frame when no outlined sheet has been read for a while: covers
+        documents the detector misses (e.g. glossy cards) even if it outlines something else."""
+        if self.live and time.time() - self.last_sheet_read > idle:
+            self.live.offer_frame(frame)
 
     def overlay_thumb(self, vis):
         if self.last_capture is None:
