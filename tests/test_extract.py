@@ -64,6 +64,14 @@ class TestExtract(unittest.TestCase):
         r = extract(page("LUC", "GAGNON", "GAGL 7203 1408", "1972-03-14"))
         self.assertEqual((r.last.value, r.first.value), ("Gagnon", "Luc"))
 
+    def test_health_card_one_line_first_then_last(self):
+        # card layout described by the user: one line, given name(s) then family name, in capitals
+        r = extract(page("MARIE ANNE TREMBLAY", "TREM 8555 1512", "1985-05-15"))
+        self.assertEqual((r.last.value, r.first.value, r.middle.value), ("Tremblay", "Marie", "Anne"))
+        r = extract(page("JEAN-FRANÇOIS CÔTÉ-LAVOIE", "COTJ 6011 0322", "1960-11-03"))
+        self.assertEqual((r.last.value, r.first.value), ("Côté-Lavoie", "Jean-François"))
+        self.assertTrue(r.agree_name and r.agree_dob)
+
     def test_stacked_without_ramq_is_low_confidence(self):
         r = extract(page("GAGNON", "LUC"))
         self.assertLess(r.last.conf, 0.5)
