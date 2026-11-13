@@ -1,0 +1,31 @@
+{
+ "built": "2026-11-13T20:09:22.147Z",
+ "sizes": {
+  "app.js": 13361,
+  "index.html": 5578,
+  "reader.js": 14977,
+  "rules.py": 2483,
+  "sample_card.jpg": 61643,
+  "sample_page.jpg": 164334,
+  "sw.js": 1271,
+  "worker.js": 4977,
+  "py/medscan/__init__.py": 89,
+  "py/medscan/ramq.py": 5086,
+  "py/medscan/ctc.py": 5120,
+  "py/medscan/extract.py": 35895,
+  "py/medscan/vote.py": 6612,
+  "vendor/ort/ort.wasm.min.mjs": 53725,
+  "vendor/ort/ort-wasm-simd-threaded.mjs": 24738,
+  "vendor/ort/ort-wasm-simd-threaded.wasm": 14848852,
+  "vendor/ort/ort.webgpu.min.mjs": 70742,
+  "vendor/ort/ort-wasm-simd-threaded.asyncify.mjs": 53457,
+  "vendor/ort/ort-wasm-simd-threaded.asyncify.wasm": 28747738,
+  "vendor/pyodide/pyodide.mjs": 17931,
+  "vendor/pyodide/pyodide.asm.mjs": 1250344,
+  "vendor/pyodide/pyodide.asm.wasm": 9598218,
+  "vendor/pyodide/python_stdlib.zip": 2545637,
+  "vendor/pyodide/pyodide-lock.json": 119077,
+  "models/PP-OCRv6_det_small.onnx": 9929594,
+  "models/latin_PP-OCRv5_rec_mobile.onnx": 7904513
+ }
+}
