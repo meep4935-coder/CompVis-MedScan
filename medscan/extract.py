@@ -636,6 +636,26 @@ def confident_still(rd, t_name=0.85, t_digits=0.9):
     return name_ok and ramq_ok
 
 
+def still_ok(rd, t_name=0.85, t_digits=0.9):
+    """Can ONE still image be proposed on its own (no further views to vote with)?
+    Returns (True, "") or (False, why not). Every field must be there, the name and the
+    birth date must agree with the RAMQ, and confident_still() must hold."""
+    if not rd.ramq.value:
+        return False, "no RAMQ read"
+    if not rd.dob.value:
+        return False, "no DOB read"
+    if not (rd.last.value and rd.first.value):
+        return False, "no name read"
+    if not rd.agree_name:
+        return False, "name doesn't match RAMQ letters"
+    if not (rd.agree_dob or rd.dob_source == "ramq"):
+        return False, "DOB doesn't match RAMQ digits"
+    if not confident_still(rd, t_name, t_digits):
+        name_sure = rd.name_lines >= 2 or rd.name_letter_conf >= t_name
+        return False, "not sure enough: " + ("RAMQ digits" if name_sure else "name")
+    return True, ""
+
+
 def _squash(s):
     return re.sub(r"\s+", "", fold(s))
 

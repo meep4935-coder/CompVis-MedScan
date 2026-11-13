@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from medscan.extract import extract, parse_dates
+from medscan.extract import extract, parse_dates, still_ok
 from medscan.vote import Voter
 
 
@@ -115,6 +115,23 @@ class TestExtract(unittest.TestCase):
         self.assertIn(date(1953, 12, 20), [d for d, _ in parse_dates("DDN 20-DÉC-1953")])
         self.assertIn(date(1985, 4, 12), [d for d, _ in parse_dates("19B5-O4-l2")])
         self.assertEqual(parse_dates("2031-01-01"), [])  # future
+
+
+class TestStillPhoto(unittest.TestCase):
+    """One photo can only be proposed when it is complete and the fields agree."""
+
+    def test_complete_and_agreeing(self):
+        self.assertEqual(still_ok(extract(page("TREMBLAY, Marie-Ève", "NAM: TREM 8555 1512", "D.N.: 1985-05-15"))),
+                         (True, ""))
+
+    def test_dob_contradicts_ramq(self):
+        ok, why = still_ok(extract(page("TREMBLAY, Marie-Ève", "NAM: TREM 8555 1512", "D.N.: 1985-05-16")))
+        self.assertFalse(ok)
+        self.assertEqual(why, "DOB doesn't match RAMQ digits")
+
+    def test_missing_fields(self):
+        self.assertEqual(still_ok(extract(page("TREMBLAY, Marie-Ève", "D.N.: 1985-05-15"))), (False, "no RAMQ read"))
+        self.assertEqual(still_ok(extract(page("NAM: TREM 8555 1512", "D.N.: 1985-05-15"))), (False, "no name read"))
 
 
 class TestVoter(unittest.TestCase):

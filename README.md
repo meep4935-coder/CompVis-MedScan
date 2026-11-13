@@ -199,6 +199,16 @@ script-based. Ultralytics now ships the same ideas as a pip package
 (`ultralytics`), with newer models (YOLO11) and the old architecture still
 available (`yolov5nu.pt`, boxes only).
 
+## Web app (in progress)
+
+The platform is planned as a web page that does all the reading on the device itself,
+with nothing uploaded: see [docs/web-app-design.md](docs/web-app-design.md).
+
+The first step is built: a speed-trial page in [web/](web/README.md) that runs the same
+two reading models in the browser (ONNX Runtime Web) and the same Python rules
+(`medscan/*.py`, run by Pyodide). On 40 camera-like fictional pages it gives the same
+patient record as the desktop reader on 38. Phone speed is not measured yet.
+
 ## Setup
 
 ```bash

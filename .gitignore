@@ -11,3 +11,5 @@ runs_*.log
 data/external/
 data/cards_eval/
 data/cards_eval_paper/
+node_modules/
+.claude/
