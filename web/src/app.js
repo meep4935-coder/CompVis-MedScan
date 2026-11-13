@@ -244,7 +244,8 @@ function showRecord(m) {
   const r = m.reading, mark = (v) => (v ? '<span class=ok>agrees</span>' : '<span class=no>not confirmed</span>');
   $("record").className = "rec";
   $("record").innerHTML = recordHtml(r) +
-    `<div class=dim>Name and RAMQ: ${mark(r.agree_name)} · Birth date and RAMQ: ${mark(r.agree_dob)}</div>`;
+    `<div class=dim>Name and RAMQ: ${mark(r.agree_name)} · Birth date and RAMQ: ` +
+    (r.dob_source === "ramq" ? "no birth date was read; it was worked out from the RAMQ" : mark(r.agree_dob)) + "</div>";
 }
 
 const STEPS = [["grab", "Grab the picture"], ["resize", "Scale it for the text finder"], ["find", "Find text (model 1)"],

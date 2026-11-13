@@ -117,6 +117,34 @@ class TestExtract(unittest.TestCase):
         self.assertEqual(parse_dates("2031-01-01"), [])  # future
 
 
+class TestShortDates(unittest.TestCase):
+    """Dates with a 2-digit year or only spaces between the parts (fictional card)."""
+    CARD = ("ALEX CHAN", "CHAA 0311 0417")  # born 2003-11-04; every part of the date is 12 or less
+
+    def test_every_order_is_offered(self):
+        got = [d for d, _ in parse_dates("03 11 04")]
+        self.assertEqual(got, [date(2003, 11, 4), date(2004, 11, 3), date(2004, 3, 11)])
+        self.assertEqual([d for d, _ in parse_dates("31/12/99")], [date(1999, 12, 31)])
+
+    def test_spaces_between_the_parts(self):
+        self.assertEqual([d for d, _ in parse_dates("2003 11 04")], [date(2003, 11, 4)])
+        self.assertEqual(parse_dates("EXP 2028 11"), [])
+
+    def test_ramq_digits_are_not_a_date(self):
+        self.assertEqual(parse_dates("CHAA 0311 0417"), [])
+        self.assertEqual(parse_dates("CHAA 03 11 04 17"), [])
+        self.assertEqual(parse_dates("Tel. : 514-555-0199"), [])
+
+    def test_ramq_settles_the_order(self):
+        for printed in ("03 11 04", "03-11-04", "04/11/03", "NAISSANCE 03 11 04", "2003 11 04"):
+            r = extract(page(*self.CARD, printed))
+            self.assertEqual((r.dob.value, r.dob_source, r.agree_dob), (date(2003, 11, 4), "read", True), printed)
+
+    def test_other_short_date_is_not_taken_as_the_dob(self):
+        r = extract(page(*self.CARD, "05 11 04"))  # some other date on the card
+        self.assertEqual((r.dob.value, r.dob_source, r.agree_dob), (date(2003, 11, 4), "ramq", False))
+
+
 class TestStillPhoto(unittest.TestCase):
     """One photo can only be proposed when it is complete and the fields agree."""
 

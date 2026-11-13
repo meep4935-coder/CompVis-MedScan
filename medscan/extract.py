@@ -284,22 +284,52 @@ def _valid_dob(y, m, d):
     return x
 
 
+def _short_year_dob(yy, m, d):
+    """A date written with a 2-digit year: the most recent century that isn't in the future."""
+    return _valid_dob(2000 + yy, m, d) or _valid_dob(1900 + yy, m, d)
+
+
+# between the parts of a date: '-', '/' or '.' (spaces around them allowed), or just a space
+_SEP = r"(?:\s?[-/.]\s?|\s)"
+# a RAMQ number's own digits are not a date, however the reader spaced them
+_RAMQ_SPAN = re.compile(r"(?<![A-Z])[A-Z]{4}\s?-?\s?\d{2}\s?\d{2}\s?-?\s?\d{2}\s?\d{2}(?!\d)")
+
+
 def parse_dates(text):
     """All plausible birth dates in a line, as (date, how_sure) pairs."""
     t = _digits_fixed(fold(text))
     found = []
-    for m in re.finditer(r"(?<!\d)(\d{4})\s?[-/.]\s?(\d{1,2})\s?[-/.]\s?(\d{1,2})(?!\d)", t):
+
+    def spaced(m):  # "2002 12 05": only spaces between the parts is weaker evidence of a date
+        return 0.0 if re.search(r"[-/.]", m[0]) else 0.15
+
+    for m in re.finditer(rf"(?<!\d)(\d{{4}}){_SEP}(\d{{1,2}}){_SEP}(\d{{1,2}})(?!\d)", t):
         x = _valid_dob(int(m[1]), int(m[2]), int(m[3]))
         if x:
-            found.append((x, 1.0))
-    for m in re.finditer(r"(?<!\d)(\d{1,2})\s?[-/.]\s?(\d{1,2})\s?[-/.]\s?(\d{4})(?!\d)", t):
+            found.append((x, 1.0 - spaced(m)))
+    for m in re.finditer(rf"(?<!\d)(\d{{1,2}}){_SEP}(\d{{1,2}}){_SEP}(\d{{4}})(?!\d)", t):
         a, b, y = int(m[1]), int(m[2]), int(m[3])
         x = _valid_dob(y, b, a)  # Quebec: JJ/MM/AAAA
         if x:
-            found.append((x, 0.9))
+            found.append((x, 0.9 - spaced(m)))
         x2 = _valid_dob(y, a, b)  # MM/DD/YYYY (English forms) is possible but less likely
         if x2 and x2 != x:
             found.append((x2, 0.4))
+    # Short dates with a 2-digit year ("85-05-15", "85 05 15"): the order can't be told from the
+    # date alone. Quebec health cards and forms write AA-MM-JJ; JJ-MM-AA and MM-JJ-AA also
+    # exist. Every valid reading is offered with modest confidence, so on its own a short
+    # date is not trusted: the RAMQ's digits settle which reading it is (see extract()).
+    short = _RAMQ_SPAN.sub(" ", t)
+    for m in re.finditer(rf"(?<!\d)(?<!\d[-/. ])(\d{{1,2}}){_SEP}(\d{{1,2}}){_SEP}(\d{{2}})(?!\d)"
+                         r"(?![-/. ]\d{1,2}(?!\d))", short):
+        a, b, c = int(m[1]), int(m[2]), int(m[3])
+        readings = [(c, b, a, 0.5), (c, a, b, 0.25)]          # JJ-MM-AA, MM-JJ-AA
+        if len(m[1]) == 2:
+            readings.insert(0, (a, b, c, 0.6))                # AA-MM-JJ
+        for yy, mo, dd, sure in readings:
+            x = _short_year_dob(yy, mo, dd)
+            if x and all(x != f[0] for f in found):
+                found.append((x, sure))
     for m in re.finditer(r"(?<!\d)(\d{1,2})(?:ER)?\s?[-.]?\s?([A-Z]{3,9})\.?\s?[-.]?\s?(\d{4})(?!\d)", t):
         mon = difflib.get_close_matches(m[2], MONTHS, n=1, cutoff=0.7)
         if mon:
