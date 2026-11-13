@@ -106,9 +106,11 @@ const handlers = {
       state.proposal = m.proposal;
       $("proposalText").innerHTML = recordHtml(m.proposal);
       $("proposalTime").textContent =
-        `Proposed after ${((performance.now() - state.liveStart) / 1000).toFixed(1)} s and ${m.views} reads.`;
+        `Proposed after ${((performance.now() - state.liveStart) / 1000).toFixed(1)} s and ${m.views} ${m.views === 1 ? "read" : "reads"}.`;
       $("proposal").hidden = false;
-      $("status").textContent = "Waiting for accept or reject.";
+      $("video").pause();   // freeze the picture that was read while the question is open
+      $("proposal").scrollIntoView({ block: "nearest", behavior: "smooth" });
+      $("status").textContent = "Is this correct? Accept, or reject to keep reading.";
     } else {
       $("status").textContent = m.status === "need_better_view" ? "Closer / more light please."
         : `Reading (${m.views} reads so far)…`;
@@ -119,7 +121,9 @@ const handlers = {
     state.proposal = null;
     $("proposal").hidden = true;
     state.liveStart = performance.now();
-    grabLive();
+    $("status").textContent = "Reading…";
+    $("video").play().catch(() => {});
+    setTimeout(grabLive, 150);
   },
   accept() {
     $("proposal").hidden = true;

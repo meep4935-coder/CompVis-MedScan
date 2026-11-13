@@ -46,6 +46,14 @@ def read(items_json, live):
     out = {"reading": rd.as_dict(), "sure": sure, "why": why}
     if live:
         voter.add(rd)
+        if not voter.proposal and not voter.accepted and sure and rd.agree_dob:
+            # this one view is complete, its name and printed birth date both agree with the
+            # RAMQ, and it is sure of its letters and digits: ask now instead of waiting for
+            # more views (a later, worse view must not take a right answer away)
+            rec = {"last": rd.last.value, "first": rd.first.value, "middle": rd.middle.value,
+                   "dob": rd.dob.value, "ramq": rd.ramq.value, "sex": rd.sex, "dob_source": "read"}
+            if voter._sig(rec) not in voter.rejected:
+                voter.proposal = rec
         out["views"] = voter.views
         out["status"] = voter.status
         out["proposal"] = _plain(voter.proposal) if voter.proposal else None
