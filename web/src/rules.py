@@ -46,14 +46,17 @@ def read(items_json, live):
     out = {"reading": rd.as_dict(), "sure": sure, "why": why}
     if live:
         voter.add(rd)
-        if not voter.proposal and not voter.accepted and sure and rd.agree_dob:
-            # this one view is complete, its name and printed birth date both agree with the
-            # RAMQ, and it is sure of its letters and digits: ask now instead of waiting for
-            # more views (a later, worse view must not take a right answer away)
+        complete = bool(rd.last.value and rd.first.value and rd.ramq.value and rd.dob.value)
+        if not voter.proposal and not voter.accepted and complete and rd.agree_name and rd.agree_dob:
+            # this one view has every field, and its name and printed birth date both agree
+            # with the RAMQ: ask now instead of waiting for more views (a later, worse view
+            # must not take a right answer away). The physician's tap is the final check;
+            # "check" tells the page what the cross-checks do not cover in this view.
             rec = {"last": rd.last.value, "first": rd.first.value, "middle": rd.middle.value,
                    "dob": rd.dob.value, "ramq": rd.ramq.value, "sex": rd.sex, "dob_source": "read"}
             if voter._sig(rec) not in voter.rejected:
                 voter.proposal = rec
+                out["check"] = "" if sure else why
         out["views"] = voter.views
         out["status"] = voter.status
         out["proposal"] = _plain(voter.proposal) if voter.proposal else None

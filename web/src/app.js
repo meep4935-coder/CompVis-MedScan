@@ -104,7 +104,8 @@ const handlers = {
     }
     if (m.proposal) {
       state.proposal = m.proposal;
-      $("proposalText").innerHTML = recordHtml(m.proposal);
+      $("proposalText").innerHTML = recordHtml(m.proposal) + (m.check ? "<div class=dim>Look closely at the " +
+        (m.check.includes("digits") ? "last digits of the RAMQ" : "spelling of the name") + ": this view was less sharp there.</div>" : "");
       $("proposalTime").textContent =
         `Proposed after ${((performance.now() - state.liveStart) / 1000).toFixed(1)} s and ${m.views} ${m.views === 1 ? "read" : "reads"}.`;
       $("proposal").hidden = false;
@@ -279,9 +280,13 @@ function deviceText() {
   ].join("\n");
 }
 const showDevice = () => ($("device").textContent = deviceText());
+fetch("build.json", { cache: "no-store" }).then((r) => r.json()).then((b) => {
+  state.built = b.built.slice(0, 16).replace("T", " ") + " UTC";
+  $("version").textContent = `Page version: ${state.built}`;
+}).catch(() => {});
 
 function summary() {
-  const L = state.load, out = ["MedScan speed trial", deviceText()];
+  const L = state.load, out = [`MedScan speed trial (page version ${state.built || "?"})`, deviceText()];
   if (L) out.push(`Load ms: engine ${ms(L.engine)}, models download ${ms(L.download)}, start ${ms(L.sessions)}, ` +
     `python ${ms(L.python)}, rules ${ms(L.rules)}, total ${ms(L.total)}`);
   if (state.reads.length) {
