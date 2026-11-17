@@ -38,6 +38,16 @@ desktop reader runs (`python scan.py --read`).
 A phone cannot use the local server for the camera (browsers only allow the camera on
 https pages). `node deploy.mjs` publishes `web/dist` as a public GitHub Pages site.
 
+## The letter (after Accept)
+
+Accepting a patient saves it on this device (IndexedDB, `src/store.js`) and opens
+`letter.html` in a new tab: the physician's letterhead with the patient written in.
+The first time, it asks for the physician's details, logo and stamp, kept on this
+device only. Every text on the sheet can be edited; edits stay with that patient's
+letter, so a reload keeps them. **Imprimer / Print** prints one Letter-size page
+without the buttons. A sure single photo (or a sample) can also be accepted, so the
+letter can be tried without a camera.
+
 ## What to look at
 
 - **Ready after**: the first load (download plus start-up). Later visits use the

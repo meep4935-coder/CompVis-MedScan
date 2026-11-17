@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self' blob: data:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: data:; img-src 'self' blob: data:">
+<title>MedScan letter</title>
+<style>
+  :root { --bg: #e9ecf1; --card: #fff; --ink: #1c2330; --dim: #5d6878; --line: #d3d8e0; --accent: #0b6bcb; --bad: #c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151a; --card: #1b2028; --ink: #e8ecf2; --dim: #9aa5b5; --line: #2c333f; --accent: #5aa9f5; --bad: #ff7b6b; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, input, select { font: inherit; }
+  button { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  button.main { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+         padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+  .bar .grow { flex: 1; }
+  .note { max-width: 8.5in; margin: 10px auto 0; padding: 0 16px; color: var(--dim); font-size: 0.88rem; }
+  #error { color: var(--bad); }
+
+  /* The sheet is always black on white, whatever the screen's colour scheme: it is what prints. */
+  .wrap { padding: 12px 16px 40px; overflow-x: auto; }
+  .sheet { width: 8.5in; min-height: 11in; margin: 0 auto; padding: 0.55in 0.6in; background: #fff; color: #111;
+           box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18); font: 11pt/1.4 Georgia, "Times New Roman", serif;
+           display: flex; flex-direction: column; }
+  [contenteditable] { outline: none; border-radius: 2px; }
+  span[contenteditable] { display: inline-block; min-width: 2em; min-height: 1.2em; vertical-align: bottom; }
+  [contenteditable]:hover { background: #fff7d6; }
+  [contenteditable]:focus { background: #fff1b8; box-shadow: 0 0 0 1px #e0b400; }
+
+  .head { display: flex; gap: 18px; align-items: flex-start; padding-bottom: 12px; border-bottom: 1.5pt solid #111; }
+  .logo { width: 1.3in; height: 0.9in; display: flex; align-items: center; justify-content: center; flex: none; }
+  .logo img { max-width: 100%; max-height: 100%; }
+  .slot { border: 1px dashed #aab; color: #889; font: 9pt system-ui, sans-serif; text-align: center; }
+  .clinic { flex: 1; }
+  .clinic .name { font-size: 15pt; font-weight: bold; }
+  .clinic div, .doc div { white-space: pre-line; }
+  .doc { text-align: right; }
+  .doc .name { font-weight: bold; font-size: 12pt; }
+  .title { margin: 18px 0 10px; font-size: 14pt; font-weight: bold; letter-spacing: 0.04em; text-transform: uppercase; }
+
+  .patient { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 5px 12px; padding: 10px 12px;
+             border: 1pt solid #111; }
+  .patient .l { color: #444; font-size: 9.5pt; align-self: center; }
+  .patient .v { font-weight: bold; border-bottom: 0.5pt solid #999; font-family: system-ui, sans-serif; font-size: 11pt; }
+
+  .body { flex: 1; margin-top: 16px; min-height: 4in; white-space: pre-wrap; }
+  .body:empty::before { content: attr(data-hint); color: #aaa; }
+
+  .foot { display: flex; align-items: flex-end; gap: 24px; margin-top: 18px; }
+  .sign { flex: 1; }
+  .sign .line { border-top: 0.75pt solid #111; margin-top: 0.6in; padding-top: 3px; font-size: 9.5pt; color: #444; }
+  .sign div { white-space: pre-line; }
+  .stamp { width: 1.6in; height: 1.1in; display: flex; align-items: center; justify-content: center; flex: none; }
+  .stamp img { max-width: 100%; max-height: 100%; }
+
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink);
+           width: min(560px, calc(100vw - 32px)); padding: 16px; }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+  dialog h2 { margin: 0 0 4px; font-size: 1.1rem; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+  .fields label { display: flex; flex-direction: column; gap: 3px; font-size: 0.85rem; color: var(--dim); }
+  .fields label.full { grid-column: 1 / -1; }
+  .fields input, .fields textarea { font: inherit; color: var(--ink); background: var(--bg); padding: 7px 9px;
+                                   border: 1px solid var(--line); border-radius: 7px; }
+  .fields textarea { resize: vertical; min-height: 3.2em; }
+  .pic { display: flex; gap: 8px; align-items: center; }
+  .pic img { height: 44px; max-width: 120px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: 4px; }
+  .dim { color: var(--dim); font-size: 0.85rem; }
+  .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+  @media print {
+    @page { size: letter; margin: 0; }
+    body { background: #fff; }
+    .bar, .note, dialog { display: none !important; }
+    .wrap { padding: 0; overflow: visible; }
+    .sheet { box-shadow: none; margin: 0; height: 11in; overflow: hidden; zoom: 1 !important; }
+    [contenteditable]:hover, [contenteditable]:focus { background: none; box-shadow: none; }
+    .slot.empty { visibility: hidden; }
+    .body:empty::before { content: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <button id="print" class="main" data-t="print">Imprimer</button>
+    <button id="profileBtn" data-t="profile">Mes coordonnées</button>
+    <button id="resetBtn" data-t="reset">Annuler mes modifications</button>
+    <span class="grow"></span>
+    <button id="lang">English</button>
+  </div>
+  <p class="note"><span data-t="hint">Tout le texte de la feuille se modifie : touchez-le et tapez. Les modifications ne valent que pour cette feuille.</span>
+    <span id="error"></span></p>
+
+  <div class="wrap">
+    <article class="sheet" id="sheet" hidden>
+      <header class="head">
+        <div class="logo slot" id="logoSlot"></div>
+        <div class="clinic">
+          <div class="name" data-k="clinic"></div>
+          <div data-k="clinicAddr"></div>
+          <div data-k="clinicPhone"></div>
+        </div>
+        <div class="doc">
+          <div class="name" data-k="docName"></div>
+          <div data-k="docTitle"></div>
+          <div><span data-k="lblLicence"></span> <span data-k="licence"></span></div>
+        </div>
+      </header>
+
+      <div class="title" data-k="title"></div>
+
+      <section class="patient">
+        <span class="l" data-k="lblLast"></span><span class="v" data-k="last"></span>
+        <span class="l" data-k="lblFirst"></span><span class="v" data-k="first"></span>
+        <span class="l" data-k="lblRamq"></span><span class="v" data-k="ramq"></span>
+        <span class="l" data-k="lblDob"></span><span class="v" data-k="dob"></span>
+        <span class="l" data-k="lblSex"></span><span class="v" data-k="sex"></span>
+        <span class="l" data-k="lblDate"></span><span class="v" data-k="date"></span>
+      </section>
+
+      <div class="body" data-k="body"></div>
+
+      <footer class="foot">
+        <div class="sign">
+          <div class="line" data-k="lblSign"></div>
+          <div data-k="signName"></div>
+          <div><span data-k="lblLicence2"></span> <span data-k="licence2"></span></div>
+        </div>
+        <div class="stamp slot" id="stampSlot"></div>
+      </footer>
+    </article>
+  </div>
+
+  <dialog id="setup">
+    <form method="dialog" id="setupForm">
+      <h2 data-t="setupTitle">Vos coordonnées</h2>
+      <p class="dim" data-t="setupNote">Entrées une seule fois et gardées sur cet appareil seulement.</p>
+      <div class="fields">
+        <label class="full"><span data-t="fDocName">Nom du médecin</span><input name="docName" placeholder="Dre Camille Exemple"></label>
+        <label><span data-t="fLicence">No de permis</span><input name="licence" inputmode="numeric" placeholder="1-23456"></label>
+        <label><span data-t="fDocTitle">Spécialité</span><input name="docTitle" placeholder="Médecine familiale"></label>
+        <label class="full"><span data-t="fClinic">Clinique ou hôpital</span><input name="clinic" placeholder="Clinique Exemple"></label>
+        <label class="full"><span data-t="fAddr">Adresse</span><textarea name="clinicAddr" placeholder="123, rue Exemple&#10;Montréal (Québec) H0H 0H0"></textarea></label>
+        <label class="full"><span data-t="fPhone">Téléphone / télécopieur</span><input name="clinicPhone" placeholder="Tél. 514 555-0100 · Téléc. 514 555-0101"></label>
+        <label><span data-t="fLogo">Logo</span>
+          <span class="pic"><img id="logoPrev" alt="" hidden><input type="file" accept="image/*" id="logoFile"></span>
+          <button type="button" id="logoClear" data-t="remove">Retirer</button></label>
+        <label><span data-t="fStamp">Tampon / sceau</span>
+          <span class="pic"><img id="stampPrev" alt="" hidden><input type="file" accept="image/*" id="stampFile"></span>
+          <button type="button" id="stampClear" data-t="remove">Retirer</button></label>
+      </div>
+      <div class="row">
+        <button type="button" id="setupCancel" data-t="cancel">Annuler</button>
+        <button type="submit" class="main" data-t="save">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+<script type="module" src="letter.js"></script>
+</body>
+</html>

@@ -23,7 +23,7 @@ function modelDir() {
   const tried = [process.env.MEDSCAN_MODELS, path.join(repo, ".venv/Lib/site-packages/rapidocr/models")];
   const lib = path.join(repo, ".venv/lib");
   if (existsSync(lib)) {
-    for (const d of ["python3.14", "python3.13", "python3.12", "python3.11", "python3.10"]) {
+    for (const d of ["python3.15", "python3.14", "python3.13", "python3.12", "python3.11", "python3.10"]) {
       tried.push(path.join(lib, d, "site-packages/rapidocr/models"));
     }
   }

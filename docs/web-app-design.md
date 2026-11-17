@@ -8,10 +8,13 @@ Decided on 2026-11-13. This is the plan for the platform; the reading logic
 1. **Scan:** the physician points the device's camera at a card, note, file or label.
    The app reads the patient's name, RAMQ and date of birth and shows a one-tap
    accept / reject.
-2. **Fill:** the accepted patient is written into one or more PDF forms, ready to
-   print, share or save.
+2. **Fill:** the accepted patient opens in a new tab on the physician's own
+   letterhead (logo, name, licence number, stamp), ready to edit and print. Filling
+   the clinic's existing PDF forms comes after.
 
-The physician never types or corrects patient data.
+Every text on the letter can be edited before printing, the patient's details
+included (decided 2026-11-17; this replaces "the physician never types or corrects
+patient data").
 
 ## Decisions
 
@@ -22,10 +25,11 @@ The physician never types or corrects patient data.
 | Capture | Live camera by default; "use a photo instead" as a backup. |
 | Finding the document | Read the whole picture inside an on-screen frame. The outline detector is added later only if testers need tilted pages or several documents at once. |
 | Reading rules | The same Python files as the desktop (`ramq.py`, `ctc.py`, `extract.py`, `vote.py`), run in the browser. One copy of the rules. |
-| Template | PDF forms with type-in boxes (fillable PDFs). Flat or scanned forms come later. |
+| Template | First a letterhead page built by the app (decided 2026-11-17): logo, clinic, physician's name and licence, patient block, a free body, signature line and stamp. Then PDF forms with type-in boxes (fillable PDFs). Flat or scanned forms come later. |
+| Editing | Everything on the letter, for that letter only. Edits are kept with the patient on the device; the physician's saved details change only in "My details". |
 | Where forms come from | A small built-in starter set, plus forms the physician adds. |
 | Matching boxes to fields | Automatic, by the boxes' names. Shown once per form for a yes / no. |
-| Also filled in | Today's date, sex (from the RAMQ), and the physician's name, licence number and clinic (typed once in settings). |
+| Also filled in | Today's date, sex (from the RAMQ), and the physician's name, licence number, clinic, logo and stamp (entered once, kept on the device). |
 | Patients kept | A saved list on the device, cleared by hand. On a new day the app asks once: "Clear N patients from earlier?" |
 | Access | Anyone with the link. No accounts, no login. |
 | Language | French by default, with a switch to English. |
@@ -105,9 +109,13 @@ bench for developing and measuring the reading logic.
    are the graphics-chip engine, a smaller picture for finding text, or fewer
    lines read per view.
 2. **Live reading and confirm:** voting, accept / reject, photo backup.
-3. **PDF filling:** forms list, automatic matching, the yes / no check.
-4. **Patients list, settings, French / English, offline install.**
-5. **Pilot:** the doctor friends try it with fictional documents first, then real
+3. **Letterhead** (built 2026-11-17, `web/src/letter.html`): Accept saves the
+   patient on the device and opens the letter in a new tab. First run asks for the
+   physician's details. Checked in a desktop browser with the sample page; printing
+   on paper and phones not yet tried.
+4. **PDF filling:** forms list, automatic matching, the yes / no check.
+5. **Patients list, settings, French / English, offline install.**
+6. **Pilot:** the doctor friends try it with fictional documents first, then real
    ones under their clinic's rules.
 
 ## Open items

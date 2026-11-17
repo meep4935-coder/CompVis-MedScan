@@ -1,4 +1,7 @@
 // MedScan speed trial: camera / photo -> background worker -> what was read + how long it took.
+// Accepting a patient saves it on this device and opens the letter (letter.html) in a new tab.
+
+import { savePatient } from "./store.js";
 
 const $ = (id) => document.getElementById(id);
 const q = new URLSearchParams(location.search);
@@ -98,19 +101,20 @@ const handlers = {
     state.onResult?.(m);
     state.onResult = null;
     if (!state.live) {
-      $("status").textContent = m.sure ? "Photo read: sure enough to propose." :
-        `Photo read, but not proposed (${m.why}). The app would ask for another photo.`;
+      if (!m.sure) {
+        $("status").textContent = `Photo read, but not proposed (${m.why}). Please take another photo.`;
+        return;
+      }
+      const r = m.reading;
+      propose({ last: r.last, first: r.first, middle: r.middle, ramq: r.ramq, dob: r.dob, sex: r.sex,
+                dob_source: r.dob_source }, "", "Proposed from one photo.");
+      $("status").textContent = "Photo read. Is this correct? Accept, or reject and take another photo.";
       return;
     }
     if (m.proposal) {
-      state.proposal = m.proposal;
-      $("proposalText").innerHTML = recordHtml(m.proposal) + (m.check ? "<div class=dim>Look closely at the " +
-        (m.check.includes("digits") ? "last digits of the RAMQ" : "spelling of the name") + ": this view was less sharp there.</div>" : "");
-      $("proposalTime").textContent =
-        `Proposed after ${((performance.now() - state.liveStart) / 1000).toFixed(1)} s and ${m.views} ${m.views === 1 ? "read" : "reads"}.`;
-      $("proposal").hidden = false;
+      propose(m.proposal, m.check,
+        `Proposed after ${((performance.now() - state.liveStart) / 1000).toFixed(1)} s and ${m.views} ${m.views === 1 ? "read" : "reads"}.`);
       $("video").pause();   // freeze the picture that was read while the question is open
-      $("proposal").scrollIntoView({ block: "nearest", behavior: "smooth" });
       $("status").textContent = "Is this correct? Accept, or reject to keep reading.";
     } else {
       $("status").textContent = m.status === "need_better_view" ? "Closer / more light please."
@@ -127,8 +131,6 @@ const handlers = {
     setTimeout(grabLive, 150);
   },
   accept() {
-    $("proposal").hidden = true;
-    $("status").textContent = "Accepted. Press Start camera for the next patient.";
     stopCamera();
   },
   reset() {},
@@ -245,6 +247,40 @@ function recordHtml(r) {
     (r.sex ? `<div><b>Sex</b> ${r.sex}</div>` : "");
 }
 
+function propose(rec, check, when) {
+  state.proposal = rec;
+  $("proposalText").innerHTML = recordHtml(rec) + (check ? "<div class=dim>Look closely at the " +
+    (check.includes("digits") ? "last digits of the RAMQ" : "spelling of the name") + ": this view was less sharp there.</div>" : "");
+  $("proposalTime").textContent = when;
+  $("proposal").hidden = false;
+  $("proposal").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+/** Accept: save the patient on this device and open its letter in a new tab. The tab is
+ *  opened right here in the tap (not after the worker answers) so browsers allow it. */
+function accept() {
+  const rec = state.proposal;
+  if (!rec) return;
+  const id = crypto.randomUUID();
+  const url = `letter.html?p=${id}`;
+  const tab = window.open(url, "_blank");
+  savePatient(id, { record: rec, acceptedAt: Date.now(), from: state.live ? "camera" : "photo" })
+    .catch((e) => fail(`Could not save the patient on this device: ${e.message || e}`));
+  if (state.live) worker.postMessage({ type: "accept" });
+  state.proposal = null;
+  $("proposal").hidden = true;
+  $("status").innerHTML = (tab ? "Accepted: the letter opened in a new tab. " :
+    `Accepted. <a href="${url}" target="_blank">Open the letter</a> (the browser blocked the new tab). `) +
+    "Start the camera for the next patient.";
+}
+
+function reject() {
+  if (state.live) return worker.postMessage({ type: "reject" });
+  state.proposal = null;
+  $("proposal").hidden = true;
+  $("status").textContent = "Rejected. Please take another photo.";
+}
+
 function showRecord(m) {
   const r = m.reading, mark = (v) => (v ? '<span class=ok>agrees</span>' : '<span class=no>not confirmed</span>');
   $("record").className = "rec";
@@ -304,8 +340,8 @@ $("photo").onclick = () => $("file").click();
 $("file").onchange = (e) => e.target.files[0] && readStill(e.target.files[0]);
 $("samplePage").onclick = () => readStill("sample_page.jpg");
 $("sampleCard").onclick = () => readStill("sample_card.jpg");
-$("accept").onclick = () => worker.postMessage({ type: "accept" });
-$("reject").onclick = () => worker.postMessage({ type: "reject" });
+$("accept").onclick = accept;
+$("reject").onclick = reject;
 $("copy").onclick = async () => {
   try {
     await navigator.clipboard.writeText(summary());
